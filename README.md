@@ -1,5 +1,5 @@
 
-# TXT Spectra Classifier — Binary by default, 4-class on demand
+# Spectra Classifier — Binary/4 class classifier
 
 **Defaults to binary** (classes 1 & 2):
 - AGN → class 1 (internal 0)
