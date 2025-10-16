@@ -8,86 +8,61 @@ from typing import Tuple, List, Optional
 PRINTABLE_CLASS_ALL4 = {0: 1, 1: 2, 2: 3, 3: 4}
 PRINTABLE_CLASS_BIN = {0: 1, 1: 2}  # when running with classes 1&2 only
 
+# Label mapping (same as in main.py)
+LABEL_MAP = {
+    "AGN": 0,
+    "HM-STAR": 1,
+    "LM-STAR": 1,
+    "YSO": 2,
+    "CV": 2,
+    "NS": 3,
+    "HMXB": 3,
+    "LMXB": 3,
+    "NS_BIN": 3,
+}
+
 # Normalization & mapping ------------------------------------------------------
 def _normalize_label(s: str) -> str:
-    """Uppercase, strip, and remove separators so 'LM-STAR' => 'LMSTAR', 'NS_bin' => 'NSBIN'."""
+    """Uppercase, strip, and keep separators for exact matching with LABEL_MAP keys."""
     s = (s or "").strip().upper()
-    # collapse spaces and separators
-    s = s.replace("-", "").replace("_", "").replace(" ", "")
+    # Accept synonyms: HMSTAR -> HM-STAR, LMSTAR -> LM-STAR, NSBIN -> NS_BIN
+    if s == "HMSTAR": s = "HM-STAR"
+    if s == "LMSTAR": s = "LM-STAR"
+    if s == "NSBIN":  s = "NS_BIN"
     return s
 
-def subset_by_classes(X_labeled, y_all_labeled, allowed=(0, 1)):
+def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Keep only rows whose label is in `allowed`, drop all others.
-    """
-    mask = np.isin(y_all_labeled, list(allowed))
-    return X_labeled[mask], y_all_labeled[mask]
-
-# Robust readers ---------------------------------------------------------------
-def _read_whitespace_table(path: str, n_cols: Optional[int] = None) -> pd.DataFrame:
-    """
-    Read a whitespace-delimited text file into a DataFrame.
-    If n_cols is provided, enforce that many columns (pad/truncate as necessary).
-    """
-    df = pd.read_csv(path, sep=r"\s+", header=None, dtype=str, engine="python")
-    if n_cols is not None:
-        # Ensure exactly n_cols columns by adding empty columns if needed
-        while df.shape[1] < n_cols:
-            df[df.shape[1]] = ""
-        if df.shape[1] > n_cols:
-            df = df.iloc[:, :n_cols]
-    return df
-
-def load_labels_with_ids(labels_txt_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Reads AllSrc_classes.txt with format:
-        <SRC_ID> <LABEL>
-    where <LABEL> may be missing (blank). We keep only rows with labels.
+    Load data from Brightpn_id_normspec_counts_label_onlylabelled.txt
+    Format: source_id, 380 spectral values, count, label
+    
     Returns:
-        ids_all: (N_all,) ids for every row in the file (including unlabeled)
-        ids_labeled: (M,) array of SRC_ID strings for labeled rows
-        y: (M,) int array in {0,1,2,3} matching LABEL_MAP
+        X: (N, 380) spectral data as float32
+        y: (N,) class labels as int64
+        src_ids: (N,) source IDs as strings
     """
-    df = _read_whitespace_table(labels_txt_path, n_cols=2)
-    df.columns = ["src_id", "label"]
-    ids_all = df["src_id"].astype(str).values
-    mask_labeled = df["label"].astype(str).str.strip() != ""
-    df_lab = df.loc[mask_labeled].copy()
-    if df_lab.empty:
-        raise ValueError("No labeled rows found in labels file.")
-    norm = df_lab["label"].astype(str).map(_normalize_label)
-    mapped = norm.map(LABEL_MAP.get)
-    if mapped.isnull().any():
-        bad = df_lab.loc[mapped.isnull(), ["src_id", "label"]].head(10)
-        raise ValueError(f"Found unknown label values. Example rows:\n{bad.to_string(index=False)}")
-    ids = df_lab["src_id"].astype(str).values
-    y = mapped.astype(int).values
-    return ids_all, ids, y
-
-def load_spectra_matrix(spectra_txt_path: str) -> np.ndarray:
-    """
-    Reads PN_spectra_rebinned.txt as (N, L) float32 matrix with no header.
-    """
-    df = pd.read_csv(spectra_txt_path, sep=r"\s+", header=None)
-    X = df.values.astype(np.float32)
-    if X.ndim != 2:
-        raise ValueError("Spectra file must be 2D (N, L).")
-    return X
-
-def load_pn_ids(pn_ids_path: str) -> np.ndarray:
-    """Reads PN_srcids.txt: one SRC_ID per row, aligned with PN_spectra_rebinned.txt rows."""
-    df = pd.read_csv(pn_ids_path, sep=r"\s+", header=None, dtype=str, engine="python")
-    return df.iloc[:, 0].astype(str).values
-
-def align_by_labeled_rows(X: np.ndarray, ids_all: np.ndarray, ids_labeled: np.ndarray) -> np.ndarray:
-    """
-    Assumes rows of X are aligned with the rows of AllSrc_classes.txt (including unlabeled).
-    Given the full list of IDs in the labels file (including unlabeled), we select only the rows
-    whose IDs are labeled, preserving order.
-    """
-    id_to_row = {sid: i for i, sid in enumerate(ids_all)}
-    rows = [id_to_row[sid] for sid in ids_labeled if sid in id_to_row]
-    return X[rows]
+    # Read the file - it has 383 columns: src_id + 380 spectra + count + label
+    df = pd.read_csv(data_path, sep=r"\s+", header=None, dtype=str, engine="python")
+    
+    if df.shape[1] != 383:
+        raise ValueError(f"Expected 383 columns (src_id + 380 spectra + count + label), got {df.shape[1]}")
+    
+    # Extract components
+    src_ids = df.iloc[:, 0].astype(str).values  # First column: source IDs
+    X = df.iloc[:, 1:381].astype(np.float32).values  # Columns 1-380: spectral data
+    labels = df.iloc[:, 382].astype(str).values  # Last column: labels
+    
+    # Normalize and map labels
+    norm_labels = np.array([_normalize_label(label) for label in labels])
+    y = np.array([LABEL_MAP.get(label, -1) for label in norm_labels])
+    
+    # Check for unknown labels
+    unknown_mask = y == -1
+    if unknown_mask.any():
+        unknown_labels = np.unique(norm_labels[unknown_mask])
+        raise ValueError(f"Found unknown labels: {unknown_labels}")
+    
+    return X, y, src_ids
 
 def filter_and_remap(y: np.ndarray, mode: str = "12") -> Tuple[np.ndarray, dict, list]:
     """
@@ -104,11 +79,11 @@ def filter_and_remap(y: np.ndarray, mode: str = "12") -> Tuple[np.ndarray, dict,
         y = y[mask]
         # Already in {0,1}; keep as-is
         printable_map = PRINTABLE_CLASS_BIN
-        target_names = ["AGN[1]", "HM/LM/YSO[2]"]
+        target_names = ["AGN[1]", "HM/LM[2]"]
         return y, printable_map, target_names
     elif mode == "all4":
         printable_map = PRINTABLE_CLASS_ALL4
-        target_names = ["AGN[1]", "HM/LM/YSO[2]", "CV[3]", "NS/HMXB/LMXB/NS_bin[4]"]
+        target_names = ["AGN[1]", "HM/LM[2]", "YSO/CV[3]", "NS/HMXB/LMXB/NS_BIN[4]"]
         return y, printable_map, target_names
     else:
         raise ValueError("mode must be '12' or 'all4'")
