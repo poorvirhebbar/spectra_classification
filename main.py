@@ -8,8 +8,9 @@ from torch.utils.data import WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-from utils.model_utils import CNN1D, train_one_epoch, evaluate
-from utils.data_utils import load_combined_data, filter_and_remap, make_tensors
+from utils.model_utils import CNN1D, FocalLoss, train_one_epoch, evaluate
+from utils.data_utils import (load_combined_data, filter_and_remap, make_tensors, 
+                               oversample_minority_classes)
 
 torch.manual_seed(42); np.random.seed(42)
 if torch.cuda.is_available(): torch.cuda.manual_seed_all(42)
@@ -22,14 +23,16 @@ CLASS_NAMES = {0: "AGN", 1: "HM/LM", 2: "YSO/CV", 3: "NS/HMXB/LMXB/NS_BIN"}
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Train a spectra classifier from combined data file.")
-    ap.add_argument("--data", default="data/Brightpn_id_normspec_counts_label_onlylabelled.txt",
-                    help="Combined data file with format: source_id, 380 spectral values, count, label.")
     ap.add_argument("--classes", choices=["2", "4"], default="2",
                     help="'2' = AGN vs HM/LM (default), '4' = 4-class.")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--weight_decay", type=float, default=0.0)
+    ap.add_argument("--weight_decay", type=float, default=1e-4)
+    ap.add_argument("--oversample_target", type=float, default=0.7,
+                    help="Target ratio for minority class oversampling (0.7 = 70% of majority)")
+    ap.add_argument("--focal_gamma", type=float, default=2.0,
+                    help="Focal loss gamma parameter (higher = more focus on hard examples)")
     ap.add_argument("--val_split", type=float, default=0.2)
     ap.add_argument("--num_workers", type=int, default=2)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -43,9 +46,12 @@ def main():
     args = parse_args()
     device = torch.device(args.device)
 
+    # Use onlylabelled file for both 2 and 4 classes (the full file contains mostly unlabeled data)
+    data_file = "data/Brightpn_id_normspec_counts_label_onlylabelled.txt"
+
     # Load data from single file
-    print(f"Loading data from {args.data}...")
-    X_all, y_all, src_ids = load_combined_data(args.data)
+    print(f"Loading data from {data_file}...")
+    X_all, y_all, src_ids = load_combined_data(data_file)
     
     print(f"Loaded {len(y_all)} labeled spectra, each with {X_all.shape[1]} bins")
     
@@ -85,6 +91,18 @@ def main():
     # Split data
     Xtr, Xva, ytr, yva = train_test_split(X_filtered, y_filtered, test_size=args.val_split,
                                           random_state=42, stratify=y_filtered)
+    
+    # Apply data augmentation and oversampling for minority classes (4-class mode only)
+    if args.classes == "4":
+        print(f"Original training distribution: {dict(zip(*np.unique(ytr, return_counts=True)))}")
+        # Oversample minority classes with augmentation
+        from collections import Counter
+        class_counts = Counter(ytr)
+        target_count = int(max(class_counts.values()) * args.oversample_target)
+        Xtr, ytr = oversample_minority_classes(Xtr, ytr, target_count=target_count, 
+                                                augment=True, noise_std=0.005)
+        print(f"After oversampling (target={args.oversample_target:.0%} of majority): {dict(zip(*np.unique(ytr, return_counts=True)))}")
+        print(f"Training set size: {len(ytr)} (increased from {len(X_filtered) * (1 - args.val_split):.0f})")
                         
     # Per-spectrum normalization (zero-mean, unit-std per row)
     def norm_per_sample(A):
@@ -131,10 +149,18 @@ def main():
 
     # 7) Model/optim  ----------------------------------------------------
     model = CNN1D(num_classes=num_classes).to(device)
-    criterion = torch.nn.CrossEntropyLoss(weight=class_weights_t.to(device))
+    
+    # Use Focal Loss for better handling of class imbalance (especially for 4-class)
+    criterion = FocalLoss(alpha=class_weights_t.to(device), gamma=args.focal_gamma)
+    
     optim = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    
+    # Learning rate scheduler: reduces LR when validation loss plateaus
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optim, mode='min', factor=0.5, patience=10, verbose=True, min_lr=1e-6
+    )
 
-        # Train + checkpoints
+    # Train + checkpoints
     os.makedirs(args.out_dir, exist_ok=True)
     best = {"acc": -1.0, "state": None}
     tag = f"{args.classes}cls_{len(y_filtered)}ex_{X_filtered.shape[1]}bins"
@@ -149,6 +175,9 @@ def main():
         print(f"Epoch {epoch:03d} | "
               f"train_loss={tr_loss_epoch:.4f} | train_acc={tr_acc_eval:.4f} | "
               f"val_loss={va_loss:.4f} | val_acc={va_acc:.4f}")
+        
+        # Step learning rate scheduler based on validation loss
+        scheduler.step(va_loss)
 
         # Save BEST checkpoint by val_acc
         if va_acc > best["acc"]:

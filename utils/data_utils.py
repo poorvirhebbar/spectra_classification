@@ -89,6 +89,109 @@ def filter_and_remap(y: np.ndarray, mode: str = "12") -> Tuple[np.ndarray, dict,
         raise ValueError("mode must be '12' or 'all4'")
 
 def make_tensors(X: np.ndarray, y: np.ndarray):
-    X_t = torch.from_numpy(X).unsqueeze(1)  # (N,1,L)
+    X_t = torch.from_numpy(X).float().unsqueeze(1)  # (N,1,L) - ensure float32
     y_t = torch.from_numpy(y.astype(np.int64))
     return X_t, y_t
+
+
+def augment_spectrum(X: np.ndarray, noise_std: float = 0.005, shift_range: int = 2) -> np.ndarray:
+    """
+    Apply minimal augmentation to spectral data (conservative for sensitive spectra).
+    
+    Args:
+        X: (N, features) array of spectra
+        noise_std: Standard deviation of Gaussian noise (default: 0.005 = 0.5% of typical values)
+        shift_range: Maximum wavelength shift in bins (default: 2)
+    
+    Returns:
+        Augmented spectrum array
+    """
+    X_aug = X.copy()
+    
+    # 1. Add very small Gaussian noise (0.5% level - very conservative)
+    noise = np.random.normal(0, noise_std, X.shape)
+    X_aug = X_aug + noise
+    
+    # 2. Random small shift (simulate wavelength calibration variations)
+    if shift_range > 0:
+        shift = np.random.randint(-shift_range, shift_range + 1)
+        if shift != 0:
+            X_aug = np.roll(X_aug, shift, axis=1)
+            # Zero out wrapped-around edges to avoid artifacts
+            if shift > 0:
+                X_aug[:, :shift] = X_aug[:, shift:shift+1]
+            else:
+                X_aug[:, shift:] = X_aug[:, shift-1:shift]
+    
+    return X_aug
+
+
+def oversample_minority_classes(X: np.ndarray, y: np.ndarray, 
+                                 target_count: int = None,
+                                 augment: bool = True,
+                                 noise_std: float = 0.005) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Oversample minority classes to balance the dataset with class-specific augmentation.
+    
+    Args:
+        X: (N, features) feature array
+        y: (N,) label array
+        target_count: Target samples per class. If None, use majority class count
+        augment: Whether to augment duplicated samples
+        noise_std: Noise level for augmentation
+    
+    Returns:
+        X_balanced, y_balanced
+    """
+    from collections import Counter
+    
+    class_counts = Counter(y)
+    if target_count is None:
+        target_count = max(class_counts.values())
+    
+    X_list, y_list = [], []
+    
+    for class_id in sorted(np.unique(y)):
+        mask = y == class_id
+        X_class = X[mask]
+        y_class = y[mask]
+        
+        current_count = len(X_class)
+        
+        if current_count < target_count:
+            # Need to oversample
+            # Use stronger augmentation for very minority classes (< 100 samples)
+            class_noise_std = noise_std * (2.0 if current_count < 100 else 1.5 if current_count < 300 else 1.0)
+            class_shift = 3 if current_count < 100 else 2
+            
+            repeats_needed = (target_count - current_count + current_count - 1) // current_count
+            
+            # Original samples
+            X_list.append(X_class)
+            y_list.append(y_class)
+            
+            # Augmented duplicates
+            for _ in range(repeats_needed):
+                n_to_add = min(current_count, target_count - len(X_list[-1]))
+                if n_to_add > 0:
+                    indices = np.random.choice(current_count, n_to_add, replace=False)
+                    X_dup = X_class[indices]
+                    
+                    if augment:
+                        # Apply class-specific stronger augmentation
+                        X_dup = augment_spectrum(X_dup, noise_std=class_noise_std, shift_range=class_shift)
+                    
+                    X_list.append(X_dup)
+                    y_list.append(y_class[indices])
+                    
+                    if len(np.concatenate(y_list)) >= target_count * len(np.unique(y)):
+                        break
+        else:
+            # Majority class - keep as is (or downsample if desired)
+            X_list.append(X_class)
+            y_list.append(y_class)
+    
+    X_balanced = np.vstack(X_list)
+    y_balanced = np.hstack(y_list)
+    
+    return X_balanced, y_balanced
