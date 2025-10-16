@@ -11,20 +11,21 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from utils.model_utils import CNN1D, FocalLoss, train_one_epoch, evaluate
 from utils.data_utils import (load_combined_data, filter_and_remap, make_tensors, 
                                oversample_minority_classes)
+from training_visualizer import TrainingVisualizer, should_visualize
 
 torch.manual_seed(42); np.random.seed(42)
 if torch.cuda.is_available(): torch.cuda.manual_seed_all(42)
 
 
 # Human-readable names (match your grouping)
-CLASS_NAMES = {0: "AGN", 1: "HM/LM", 2: "YSO/CV", 3: "NS/HMXB/LMXB/NS_BIN"}
+CLASS_NAMES = {0: "AGN", 1: "HM/LM/YSO", 2: "CV", 3: "NS/HMXB/LMXB/NS_BIN"}
 
 
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Train a spectra classifier from combined data file.")
     ap.add_argument("--classes", choices=["2", "4"], default="2",
-                    help="'2' = AGN vs HM/LM (default), '4' = 4-class.")
+                    help="'2' = AGN vs HM/LM/YSO (default), '4' = 4-class: AGN, HM/LM/YSO, CV, NS.")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -33,6 +34,12 @@ def parse_args():
                     help="Target ratio for minority class oversampling (0.7 = 70% of majority)")
     ap.add_argument("--focal_gamma", type=float, default=2.0,
                     help="Focal loss gamma parameter (higher = more focus on hard examples)")
+    ap.add_argument("--visualize_training", action="store_true",
+                    help="Enable real-time latent space visualization during training")
+    ap.add_argument("--viz_every", type=int, default=10,
+                    help="Visualize latent space every N epochs (default: 10)")
+    ap.add_argument("--viz_method", choices=["umap", "tsne"], default="tsne",
+                    help="Method for dimensionality reduction during training (tsne is faster)")
     ap.add_argument("--val_split", type=float, default=0.2)
     ap.add_argument("--num_workers", type=int, default=2)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -157,8 +164,17 @@ def main():
     
     # Learning rate scheduler: reduces LR when validation loss plateaus
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optim, mode='min', factor=0.5, patience=10, verbose=True, min_lr=1e-6
+        optim, mode='min', factor=0.5, patience=10, min_lr=1e-6
     )
+
+    # Initialize training visualizer if requested
+    visualizer = None
+    if args.visualize_training:
+        visualizer = TrainingVisualizer(
+            num_classes=num_classes,
+            run_name=None,  # Auto-increment
+            method=args.viz_method
+        )
 
     # Train + checkpoints
     os.makedirs(args.out_dir, exist_ok=True)
@@ -177,7 +193,18 @@ def main():
               f"val_loss={va_loss:.4f} | val_acc={va_acc:.4f}")
         
         # Step learning rate scheduler based on validation loss
+        old_lr = optim.param_groups[0]['lr']
         scheduler.step(va_loss)
+        new_lr = optim.param_groups[0]['lr']
+        if new_lr < old_lr:
+            print(f"  ↳ Learning rate reduced: {old_lr:.6f} → {new_lr:.6f}")
+        
+        # Visualize latent space if requested
+        if visualizer and should_visualize(epoch, args.epochs, args.viz_every):
+            visualizer.visualize_epoch(
+                model, train_eval_loader, val_loader, device,
+                epoch, tr_acc_eval, va_acc, tr_loss_eval, va_loss
+            )
 
         # Save BEST checkpoint by val_acc
         if va_acc > best["acc"]:
@@ -230,6 +257,12 @@ def main():
         with open(args.save_preds, "w") as f:
             json.dump({"preds": y_pred.tolist()}, f, indent=2)
         print(f"Saved validation predictions to {args.save_preds}")
+    
+    # Create animation script if visualization was enabled
+    if visualizer:
+        visualizer.create_animation_script()
+        print(f"\n📽️  To create an animation of training evolution:")
+        print(f"   cd {visualizer.run_dir} && ./create_animation.sh")
 
 if __name__ == "__main__":
     main()

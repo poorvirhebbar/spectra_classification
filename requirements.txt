@@ -2,3 +2,7 @@ numpy
 pandas
 scikit-learn
 torch
+umap-learn
+seaborn
+matplotlib
+scikit-learn

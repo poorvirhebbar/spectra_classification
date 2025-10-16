@@ -1,0 +1,7 @@
+{
+  "run_directory": "training_feature_visualizations/run_005",
+  "num_classes": 4,
+  "method": "tsne",
+  "start_time": "2025-10-16T06:12:53.522187",
+  "has_umap": true
+}

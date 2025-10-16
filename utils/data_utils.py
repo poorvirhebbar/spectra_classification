@@ -79,11 +79,11 @@ def filter_and_remap(y: np.ndarray, mode: str = "12") -> Tuple[np.ndarray, dict,
         y = y[mask]
         # Already in {0,1}; keep as-is
         printable_map = PRINTABLE_CLASS_BIN
-        target_names = ["AGN[1]", "HM/LM[2]"]
+        target_names = ["AGN[1]", "HM/LM/YSO[2]"]
         return y, printable_map, target_names
     elif mode == "all4":
         printable_map = PRINTABLE_CLASS_ALL4
-        target_names = ["AGN[1]", "HM/LM[2]", "YSO/CV[3]", "NS/HMXB/LMXB/NS_BIN[4]"]
+        target_names = ["AGN[1]", "HM/LM/YSO[2]", "CV[3]", "NS/HMXB/LMXB/NS_BIN[4]"]
         return y, printable_map, target_names
     else:
         raise ValueError("mode must be '12' or 'all4'")

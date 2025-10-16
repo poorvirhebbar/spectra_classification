@@ -1,0 +1,18 @@
+============================================================
+LATENT SPACE VISUALIZATION SUMMARY
+============================================================
+Checkpoint: best_2cls_2284ex_380bins_val0.9606.pt
+Output directory: visualizations/best_2cls_acc96.06%
+Method: UMAP
+Classes: 2
+Validation accuracy: 96.06%
+Total samples: 457
+
+Per-class performance:
+  AGN                 : 262/268 correct (97.76%)
+  HM/LM/YSO           : 177/189 correct (93.65%)
+
+Most confused pairs:
+  HM/LM/YSO       → AGN            :  12 errors
+  AGN             → HM/LM/YSO      :   6 errors
+============================================================
