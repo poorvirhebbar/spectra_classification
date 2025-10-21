@@ -36,8 +36,8 @@ def parse_args():
                     help="Focal loss gamma parameter (higher = more focus on hard examples)")
     ap.add_argument("--visualize_training", action="store_true",
                     help="Enable real-time latent space visualization during training")
-    ap.add_argument("--viz_every", type=int, default=10,
-                    help="Visualize latent space every N epochs (default: 10)")
+    ap.add_argument("--viz_every", type=int, default=5,
+                    help="Visualize latent space every N epochs (default: 5 for GradCAM)")
     ap.add_argument("--viz_method", choices=["umap", "tsne"], default="tsne",
                     help="Method for dimensionality reduction during training (tsne is faster)")
     ap.add_argument("--val_split", type=float, default=0.2)
@@ -47,14 +47,18 @@ def parse_args():
                     help="Optional JSON path to save validation predictions.")
     ap.add_argument("--out_dir", default="checkpoints",
                     help="Directory to save model checkpoints (best_*.pt, last_*.pt).")
+    ap.add_argument("--data", choices=["Brightmos", "Brightpn"], default="Brightpn",
+                    help="Dataset to use: 'Brightmos' or 'Brightpn' (default: Brightpn)")
+    ap.add_argument("--data_dir", default="data",
+                    help="Directory containing data files (default: data)")
     return ap.parse_args()
 
 def main():
     args = parse_args()
     device = torch.device(args.device)
 
-    # Use onlylabelled file for both 2 and 4 classes (the full file contains mostly unlabeled data)
-    data_file = "data/Brightpn_id_normspec_counts_label_onlylabelled.txt"
+    # Choose data file based on --data argument
+    data_file = f"{args.data_dir}/{args.data}_id_normspec_counts_label_onlylabelled.txt"
 
     # Load data from single file
     print(f"Loading data from {data_file}...")
@@ -173,7 +177,9 @@ def main():
         visualizer = TrainingVisualizer(
             num_classes=num_classes,
             run_name=None,  # Auto-increment
-            method=args.viz_method
+            method=args.viz_method,
+            enable_gradcam=True,  # Enable GradCAM by default
+            gradcam_layer='features.2'  # Target the third conv layer
         )
 
     # Train + checkpoints
