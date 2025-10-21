@@ -329,7 +329,7 @@ def main():
     
     # Load data
     print(f"Loading data from {args.data}...")
-    X_all, y_all, src_ids = load_combined_data(args.data)
+    X_all, y_all, src_ids, counts = load_combined_data(args.data)
     
     # Filter based on class mode
     if args.classes == "2":

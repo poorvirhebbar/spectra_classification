@@ -31,7 +31,7 @@ def _normalize_label(s: str) -> str:
     if s == "NSBIN":  s = "NS_BIN"
     return s
 
-def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load data from Brightpn_id_normspec_counts_label_onlylabelled.txt
     Format: source_id, 380 spectral values, count, label
@@ -40,6 +40,7 @@ def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarr
         X: (N, 380) spectral data as float32
         y: (N,) class labels as int64
         src_ids: (N,) source IDs as strings
+        counts: (N,) count values as float32
     """
     # Read the file - it has 383 columns: src_id + 380 spectra + count + label
     df = pd.read_csv(data_path, sep=r"\s+", header=None, dtype=str, engine="python")
@@ -50,6 +51,7 @@ def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarr
     # Extract components
     src_ids = df.iloc[:, 0].astype(str).values  # First column: source IDs
     X = df.iloc[:, 1:381].astype(np.float32).values  # Columns 1-380: spectral data
+    counts = df.iloc[:, 381].astype(np.float32).values  # Column 381: counts
     labels = df.iloc[:, 382].astype(str).values  # Last column: labels
     
     # Normalize and map labels
@@ -62,7 +64,7 @@ def load_combined_data(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarr
         unknown_labels = np.unique(norm_labels[unknown_mask])
         raise ValueError(f"Found unknown labels: {unknown_labels}")
     
-    return X, y, src_ids
+    return X, y, src_ids, counts
 
 def filter_and_remap(y: np.ndarray, mode: str = "12") -> Tuple[np.ndarray, dict, list]:
     """
@@ -195,3 +197,262 @@ def oversample_minority_classes(X: np.ndarray, y: np.ndarray,
     y_balanced = np.hstack(y_list)
     
     return X_balanced, y_balanced
+
+
+# ============================================================================
+# Semi-supervised learning utilities: Load data with unlabelled samples
+# ============================================================================
+
+def load_data_with_unlabelled(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Load data file that contains BOTH labelled and unlabelled samples.
+    
+    File format: source_id, 380 spectral values, count, label
+    - If label column is present and valid -> labelled
+    - If label column is empty/NaN/"" -> unlabelled
+    
+    Args:
+        data_path: Path to data file (e.g., "data/Brightpn_id_normspec_counts_label.txt")
+    
+    Returns:
+        X_labelled: (N_lab, 380) labelled spectral data
+        y_labelled: (N_lab,) labelled class indices
+        src_ids_labelled: (N_lab,) source IDs for labelled data
+        counts_labelled: (N_lab,) counts for labelled data
+        X_unlabelled: (N_unlab, 380) unlabelled spectral data
+        src_ids_unlabelled: (N_unlab,) source IDs for unlabelled data
+        counts_unlabelled: (N_unlab,) counts for unlabelled data
+    """
+    # Read file - handle both 382 (no label) and 383 (with label) columns
+    df = pd.read_csv(data_path, sep=r"\s+", header=None, dtype=str, engine="python")
+    
+    # Extract components
+    src_ids = df.iloc[:, 0].astype(str).values
+    X = df.iloc[:, 1:-2].astype(np.float32).values  # All spectral columns except last 2
+    counts = df.iloc[:, -2].astype(np.float32).values  # Second to last column is count
+    
+    # Last column is label (may be NaN, empty, or valid)
+    if df.shape[1] >= 383:
+        labels_raw = df.iloc[:, -1].astype(str).values
+    else:
+        # No label column at all -> all unlabelled
+        labels_raw = np.array([''] * len(df))
+    
+    # Identify labelled vs unlabelled
+    # Unlabelled if: NaN, empty string, "nan", "NONE", etc.
+    is_labelled = np.array([
+        (label not in ['', 'nan', 'NaN', 'NONE', 'None']) and (label != 'nan')
+        for label in labels_raw
+    ])
+    
+    # Split into labelled and unlabelled
+    X_labelled = X[is_labelled]
+    labels_labelled = labels_raw[is_labelled]
+    src_ids_labelled = src_ids[is_labelled]
+    counts_labelled = counts[is_labelled]
+    
+    X_unlabelled = X[~is_labelled]
+    src_ids_unlabelled = src_ids[~is_labelled]
+    counts_unlabelled = counts[~is_labelled]
+    
+    # Process labelled data through label mapping
+    if len(X_labelled) > 0:
+        norm_labels = np.array([_normalize_label(label) for label in labels_labelled])
+        y_labelled = np.array([LABEL_MAP.get(label, -1) for label in norm_labels])
+        
+        # Check for unknown labels
+        unknown_mask = y_labelled == -1
+        if unknown_mask.any():
+            unknown_labels = np.unique(norm_labels[unknown_mask])
+            raise ValueError(f"Found unknown labels in labelled data: {unknown_labels}")
+    else:
+        y_labelled = np.array([], dtype=np.int64)
+    
+    print(f"Loaded from {data_path}:")
+    print(f"  Labelled samples: {len(X_labelled)}")
+    print(f"  Unlabelled samples: {len(X_unlabelled)}")
+    
+    return X_labelled, y_labelled, src_ids_labelled, counts_labelled, X_unlabelled, src_ids_unlabelled, counts_unlabelled
+
+
+def create_test_set(X, y, src_ids, counts=None, n_samples_total=10, random_state=42):
+    """
+    Create a held-out test set with stratified sampling.
+    
+    Samples n_samples_total samples in total (not per class), distributed
+    proportionally across classes to maintain class balance.
+    
+    Args:
+        X: Feature array (N, 380)
+        y: Label array (N,)
+        src_ids: Source IDs (N,)
+        counts: Count values (N,) - optional
+        n_samples_total: Total number of samples to hold out (default: 10)
+        random_state: Random seed
+    
+    Returns:
+        X_remaining, y_remaining, src_ids_remaining, counts_remaining: Data after removing test samples
+        X_test, y_test, src_ids_test, counts_test: Held-out test data
+    
+    Example:
+        For 4-class with n_samples_total=10:
+        - If classes are balanced: ~2-3 samples per class
+        - If imbalanced: proportional to class distribution
+    """
+    np.random.seed(random_state)
+    
+    unique_classes = np.unique(y)
+    n_classes = len(unique_classes)
+    
+    # Compute class proportions
+    class_counts = np.array([np.sum(y == c) for c in unique_classes])
+    class_proportions = class_counts / len(y)
+    
+    # Allocate samples proportionally (at least 1 per class if possible)
+    samples_per_class = np.maximum(1, np.round(class_proportions * n_samples_total).astype(int))
+    
+    # Adjust to exactly n_samples_total
+    while samples_per_class.sum() > n_samples_total:
+        # Remove from largest allocation
+        max_idx = np.argmax(samples_per_class)
+        samples_per_class[max_idx] -= 1
+    
+    while samples_per_class.sum() < n_samples_total:
+        # Add to smallest allocation (but not exceeding class size)
+        for idx in np.argsort(samples_per_class):
+            if samples_per_class[idx] < class_counts[idx]:
+                samples_per_class[idx] += 1
+                if samples_per_class.sum() >= n_samples_total:
+                    break
+    
+    # Sample from each class
+    test_indices = []
+    for class_id, n_samples in zip(unique_classes, samples_per_class):
+        class_indices = np.where(y == class_id)[0]
+        n_samples = min(n_samples, len(class_indices))
+        
+        if n_samples > 0:
+            selected = np.random.choice(class_indices, n_samples, replace=False)
+            test_indices.extend(selected)
+    
+    # Create masks
+    test_mask = np.zeros(len(X), dtype=bool)
+    test_mask[test_indices] = True
+    
+    # Split
+    X_test = X[test_mask]
+    y_test = y[test_mask]
+    src_ids_test = src_ids[test_mask]
+    
+    X_remaining = X[~test_mask]
+    y_remaining = y[~test_mask]
+    src_ids_remaining = src_ids[~test_mask]
+    
+    # Handle counts if provided
+    if counts is not None:
+        counts_test = counts[test_mask]
+        counts_remaining = counts[~test_mask]
+    else:
+        counts_test = None
+        counts_remaining = None
+    
+    return X_remaining, y_remaining, src_ids_remaining, counts_remaining, X_test, y_test, src_ids_test, counts_test
+
+
+def create_test_set_unlabelled(X, src_ids, n_samples=10, random_state=42):
+    """
+    Create a held-out test set from unlabelled data (random sampling).
+    
+    Args:
+        X: Feature array (N, 380)
+        src_ids: Source IDs (N,)
+        n_samples: Number of samples to hold out
+        random_state: Random seed
+    
+    Returns:
+        X_remaining, src_ids_remaining: Data after removing test samples
+        X_test, src_ids_test: Held-out test data
+    """
+    np.random.seed(random_state)
+    
+    n_samples = min(n_samples, len(X))
+    test_indices = np.random.choice(len(X), n_samples, replace=False)
+    
+    test_mask = np.zeros(len(X), dtype=bool)
+    test_mask[test_indices] = True
+    
+    X_test = X[test_mask]
+    src_ids_test = src_ids[test_mask]
+    
+    X_remaining = X[~test_mask]
+    src_ids_remaining = src_ids[~test_mask]
+    
+    return X_remaining, src_ids_remaining, X_test, src_ids_test
+
+
+def save_test_set(X_test, y_test, src_ids_test, save_path, class_names=None):
+    """
+    Save test set to JSON for later evaluation.
+    
+    Args:
+        X_test: Test features (N, 380)
+        y_test: Test labels (N,) - can be None for unlabelled
+        src_ids_test: Source IDs (N,)
+        save_path: Path to save JSON file
+        class_names: Optional dict mapping class_id -> name
+    """
+    import json
+    
+    data = {
+        'n_samples': len(X_test),
+        'samples': []
+    }
+    
+    for i in range(len(X_test)):
+        sample = {
+            'source_id': str(src_ids_test[i]),
+            'spectrum': X_test[i].tolist(),
+        }
+        
+        if y_test is not None:
+            sample['true_label'] = int(y_test[i])
+            if class_names is not None:
+                sample['true_label_name'] = class_names.get(int(y_test[i]), 'Unknown')
+        
+        data['samples'].append(sample)
+    
+    with open(save_path, 'w') as f:
+        json.dump(data, f, indent=2)
+    
+    print(f"Saved test set with {len(X_test)} samples to {save_path}")
+
+
+def load_test_set(load_path):
+    """
+    Load test set from JSON.
+    
+    Args:
+        load_path: Path to JSON file
+    
+    Returns:
+        X_test, y_test, src_ids_test
+        (y_test is None if test set is unlabelled)
+    """
+    import json
+    
+    with open(load_path, 'r') as f:
+        data = json.load(f)
+    
+    n_samples = data['n_samples']
+    X_test = np.array([sample['spectrum'] for sample in data['samples']], dtype=np.float32)
+    src_ids_test = np.array([sample['source_id'] for sample in data['samples']])
+    
+    # Check if labels exist
+    if 'true_label' in data['samples'][0]:
+        y_test = np.array([sample['true_label'] for sample in data['samples']], dtype=np.int64)
+    else:
+        y_test = None
+    
+    print(f"Loaded test set with {n_samples} samples from {load_path}")
+    
+    return X_test, y_test, src_ids_test

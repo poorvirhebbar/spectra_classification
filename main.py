@@ -62,7 +62,7 @@ def main():
 
     # Load data from single file
     print(f"Loading data from {data_file}...")
-    X_all, y_all, src_ids = load_combined_data(data_file)
+    X_all, y_all, src_ids, counts = load_combined_data(data_file)
     
     print(f"Loaded {len(y_all)} labeled spectra, each with {X_all.shape[1]} bins")
     
@@ -81,12 +81,16 @@ def main():
     
     y_filtered, printable_map, target_names = filter_and_remap(y_all, mode)
     
-    # Apply the same filtering to X
+    # Apply the same filtering to X, src_ids, and counts
     if args.classes == "2":
         mask = np.isin(y_all, [0, 1])
         X_filtered = X_all[mask]
+        src_ids_filtered = src_ids[mask]
+        counts_filtered = counts[mask]
     else:
         X_filtered = X_all
+        src_ids_filtered = src_ids
+        counts_filtered = counts
         y_filtered = y_all
 
     if len(y_filtered) == 0:
@@ -100,8 +104,10 @@ def main():
     print(f"Training on {len(y_filtered)} labeled spectra across {num_classes} classes.")
 
     # Split data
-    Xtr, Xva, ytr, yva = train_test_split(X_filtered, y_filtered, test_size=args.val_split,
-                                          random_state=42, stratify=y_filtered)
+    Xtr, Xva, ytr, yva, src_ids_tr, src_ids_va, counts_tr, counts_va = train_test_split(
+        X_filtered, y_filtered, src_ids_filtered, counts_filtered,
+        test_size=args.val_split, random_state=42, stratify=y_filtered
+    )
     
     # Apply data augmentation and oversampling for minority classes (4-class mode only)
     if args.classes == "4":
@@ -179,7 +185,9 @@ def main():
             run_name=None,  # Auto-increment
             method=args.viz_method,
             enable_gradcam=True,  # Enable GradCAM by default
-            gradcam_layer='features.2'  # Target the third conv layer
+            gradcam_layer='features.2',  # Target the third conv layer
+            train_metadata={'src_ids': src_ids_tr, 'counts': counts_tr},
+            val_metadata={'src_ids': src_ids_va, 'counts': counts_va}
         )
 
     # Train + checkpoints
@@ -218,9 +226,9 @@ def main():
                 "acc": va_acc, 
                 "loss": va_loss,
                 "epoch": epoch,
-                "state": {k: v.cpu() for k, v in model.state_dict().items()}
+                "state": {k: v.cpu().clone() for k, v in model.state_dict().items()}
             }
-            best_ckpt_path = os.path.join(args.out_dir, f"best_{tag}_val{va_acc:.4f}.pt")
+            best_ckpt_path = os.path.join(args.out_dir, f"best_{tag}_epoch{epoch:03d}_val{va_acc:.4f}.pt")
             torch.save({
                 "state_dict": best["state"],
                 "num_classes": num_classes,
@@ -237,9 +245,9 @@ def main():
         print(f"\n✅ Loaded BEST model from epoch {best['epoch']} (val_acc={best['acc']:.4f}, val_loss={best['loss']:.4f})")
 
     # Also save LAST checkpoint for reproducibility
-    last_ckpt_path = os.path.join(args.out_dir, f"last_{tag}_val{va_acc:.4f}.pt")
+    last_ckpt_path = os.path.join(args.out_dir, f"last_{tag}_epoch{epoch:03d}_val{va_acc:.4f}.pt")
     torch.save({
-        "state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
+        "state_dict": {k: v.cpu().clone() for k, v in model.state_dict().items()},
         "num_classes": num_classes,
         "class_names": CLASS_NAMES,
         "args": vars(args),

@@ -158,7 +158,8 @@ class TrainingVisualizer:
     
     def __init__(self, output_dir="training_feature_visualizations", 
                  num_classes=4, run_name=None, method='tsne', 
-                 enable_gradcam=True, gradcam_layer='features.2'):
+                 enable_gradcam=True, gradcam_layer='features.2',
+                 train_metadata=None, val_metadata=None):
         """
         Initialize training visualizer.
         
@@ -169,6 +170,8 @@ class TrainingVisualizer:
             method: 'umap' or 'tsne' (tsne is faster for during-training viz)
             enable_gradcam: Whether to enable GradCAM visualization
             gradcam_layer: Target layer for GradCAM (default: 'features.2' for conv layer 3)
+            train_metadata: Dict with 'src_ids' and 'counts' for training data
+            val_metadata: Dict with 'src_ids' and 'counts' for validation data
         """
         self.base_dir = Path(output_dir)
         self.base_dir.mkdir(exist_ok=True)
@@ -179,6 +182,10 @@ class TrainingVisualizer:
         self.method = method if (method == 'umap' and HAS_UMAP) else 'tsne'
         self.enable_gradcam = enable_gradcam
         self.gradcam_layer = gradcam_layer
+        
+        # Store metadata for filtering and display
+        self.train_metadata = train_metadata or {}
+        self.val_metadata = val_metadata or {}
         
         # Save run metadata
         self._save_metadata()
@@ -233,7 +240,7 @@ class TrainingVisualizer:
             json.dump(metadata, f, indent=2)
     
     @torch.no_grad()
-    def extract_features(self, model, dataloader, device, max_samples=500):
+    def extract_features(self, model, dataloader, device, max_samples=500, metadata=None, min_count=500):
         """
         Extract features from model for a subset of data.
         Uses stratified sampling to ensure balanced class representation.
@@ -243,9 +250,11 @@ class TrainingVisualizer:
             dataloader: DataLoader for the data
             device: torch device
             max_samples: Maximum samples to extract (for speed)
+            metadata: Dict with 'src_ids' and 'counts' arrays
+            min_count: Minimum count threshold for filtering samples (default: 500)
         
         Returns:
-            features, labels, predictions (numpy arrays)
+            features, labels, predictions, src_ids (numpy arrays)
         """
         model.eval()
         
@@ -278,6 +287,23 @@ class TrainingVisualizer:
         labels = np.concatenate(all_labels)
         predictions = np.concatenate(all_preds)
         
+        # Get source IDs and counts from metadata
+        src_ids = metadata.get('src_ids', np.array([f"sample_{i}" for i in range(len(features))]))
+        counts = metadata.get('counts', np.ones(len(features)) * min_count)  # Default to passing filter
+        
+        # Filter by count > min_count (only if counts array matches features size)
+        if len(counts) == len(features):
+            count_mask = counts > min_count
+            features = features[count_mask]
+            labels = labels[count_mask]
+            predictions = predictions[count_mask]
+            src_ids = src_ids[count_mask]
+        else:
+            # Size mismatch (e.g., after data augmentation) - skip count filtering
+            # Use first len(features) source IDs or generate defaults
+            if len(src_ids) < len(features):
+                src_ids = np.array([f"sample_{i}" for i in range(len(features))])
+        
         # If we have more samples than max_samples, do stratified sampling
         if len(features) > max_samples:
             # Sample equally from each class
@@ -304,11 +330,12 @@ class TrainingVisualizer:
             features = features[selected_indices]
             labels = labels[selected_indices]
             predictions = predictions[selected_indices]
+            src_ids = src_ids[selected_indices]
         
-        return features, labels, predictions
+        return features, labels, predictions, src_ids
     
     @torch.no_grad()
-    def extract_sample_spectra(self, model, dataloader, device, num_samples=6):
+    def extract_sample_spectra(self, model, dataloader, device, metadata=None, num_samples=6, min_count=500, skip_first=2):
         """
         Extract sample spectra and their predictions for GradCAM visualization.
         
@@ -316,19 +343,29 @@ class TrainingVisualizer:
             model: The CNN model
             dataloader: DataLoader for the data
             device: torch device
+            metadata: Dict with 'src_ids' and 'counts' arrays
             num_samples: Number of samples to extract per class
+            min_count: Minimum count threshold for filtering samples
+            skip_first: Number of samples to skip per class before selecting (default: 2)
         
         Returns:
-            spectra, labels, predictions (numpy arrays)
+            spectra, labels, predictions, src_ids (numpy arrays)
         """
         model.eval()
         
         all_spectra = []
         all_labels = []
         all_preds = []
+        all_indices = []  # Track which sample indices we're using
         
-        # Collect samples from each class
+        # Collect samples from each class (with skip_first offset)
         class_counts = {i: 0 for i in range(self.num_classes)}
+        class_skipped = {i: 0 for i in range(self.num_classes)}  # Track how many we've skipped per class
+        sample_idx = 0
+        
+        # Get metadata
+        src_ids = metadata.get('src_ids', np.array([f"sample_{i}" for i in range(1000)])) if metadata else None
+        counts = metadata.get('counts', np.ones(1000) * min_count) if metadata else None
         
         for xb, yb in dataloader:
             if all(count >= num_samples for count in class_counts.values()):
@@ -339,16 +376,41 @@ class TrainingVisualizer:
             logits = model(xb)
             preds = torch.argmax(logits, dim=1)
             
-            # Select samples from classes we still need
+            # Select samples from classes we still need (after skipping first N)
             for i in range(xb.size(0)):
                 true_class = yb[i].item()
-                if class_counts[true_class] < num_samples:
-                    all_spectra.append(xb[i].cpu().numpy())
-                    all_labels.append(yb[i].cpu().numpy())
-                    all_preds.append(preds[i].cpu().numpy())
-                    class_counts[true_class] += 1
+                
+                # Check if sample passes count filter
+                if counts is None or sample_idx >= len(counts) or counts[sample_idx] > min_count:
+                    # Skip the first N samples from this class
+                    if class_skipped[true_class] < skip_first:
+                        class_skipped[true_class] += 1
+                    # Now collect samples after skipping
+                    elif class_counts[true_class] < num_samples:
+                        all_spectra.append(xb[i].cpu().numpy())
+                        all_labels.append(yb[i].cpu().numpy())
+                        all_preds.append(preds[i].cpu().numpy())
+                        all_indices.append(sample_idx)
+                        class_counts[true_class] += 1
+                
+                sample_idx += 1
         
-        return np.array(all_spectra), np.array(all_labels), np.array(all_preds)
+        # Get source IDs for selected samples
+        if src_ids is not None and len(all_indices) > 0:
+            # Only use indices that are within bounds
+            valid_indices = [idx for idx in all_indices if idx < len(src_ids)]
+            if len(valid_indices) == len(all_indices):
+                selected_src_ids = src_ids[all_indices]
+            else:
+                # Some indices out of bounds (augmented data) - generate defaults
+                selected_src_ids = np.array([
+                    src_ids[idx] if idx < len(src_ids) else f"sample_{idx}"
+                    for idx in all_indices
+                ])
+        else:
+            selected_src_ids = np.array([f"sample_{i}" for i in range(len(all_spectra))])
+        
+        return np.array(all_spectra), np.array(all_labels), np.array(all_preds), selected_src_ids
     
     def reduce_dimensions(self, features, random_state=42):
         """Reduce features to 2D quickly."""
@@ -392,17 +454,18 @@ class TrainingVisualizer:
         print(f"\n   📸 Creating enhanced visualization for epoch {epoch}...")
         
         # Extract features from both sets for latent space visualization
-        train_features, train_labels, train_preds = self.extract_features(
-            model, train_loader, device, max_samples=500
+        train_features, train_labels, train_preds, train_src_ids = self.extract_features(
+            model, train_loader, device, max_samples=500, metadata=self.train_metadata, min_count=500
         )
-        val_features, val_labels, val_preds = self.extract_features(
-            model, val_loader, device, max_samples=300
+        val_features, val_labels, val_preds, val_src_ids = self.extract_features(
+            model, val_loader, device, max_samples=300, metadata=self.val_metadata, min_count=500
         )
         
         # Combine for joint embedding
         all_features = np.vstack([train_features, val_features])
         all_labels = np.concatenate([train_labels, val_labels])
         all_preds = np.concatenate([train_preds, val_preds])
+        all_src_ids = np.concatenate([train_src_ids, val_src_ids])
         is_train = np.array([True] * len(train_features) + [False] * len(val_features))
         
         # Reduce dimensions
@@ -467,9 +530,9 @@ class TrainingVisualizer:
         # GradCAM visualizations (if enabled)
         if self.enable_gradcam:
             try:
-                # Extract sample spectra for GradCAM
-                sample_spectra, sample_labels, sample_preds = self.extract_sample_spectra(
-                    model, val_loader, device, num_samples=2
+                # Extract sample spectra for GradCAM (skip first 3 samples to avoid consistently hard cases)
+                sample_spectra, sample_labels, sample_preds, sample_src_ids = self.extract_sample_spectra(
+                    model, val_loader, device, metadata=self.val_metadata, num_samples=2, min_count=500, skip_first=3
                 )
                 
                 if len(sample_spectra) > 0:
@@ -487,6 +550,7 @@ class TrainingVisualizer:
                         cam = cams[i]
                         true_label = sample_labels[i]
                         pred_label = sample_preds[i]
+                        src_id = sample_src_ids[i] if i < len(sample_src_ids) else f"sample_{i}"
                         
                         # Create linearly-spaced bins from 0.5 to 10 keV, displayed on log scale
                         bins = np.linspace(0.5, 10, len(spectrum))
@@ -515,7 +579,7 @@ class TrainingVisualizer:
                         ax.set_xticklabels(['0.5', '1', '2', '5', '10'])
                         ax.xaxis.set_minor_formatter(mticker.NullFormatter())
 
-                        ax.set_title(f'Sample {i+1}: True={CLASS_NAMES[true_label]}, '
+                        ax.set_title(f'Sample {i+1} [{src_id}]: True={CLASS_NAMES[true_label]}, '
                                     f'Pred={CLASS_NAMES[pred_label]}', fontsize=10)
                         ax.legend(fontsize=8)
                         ax.grid(alpha=0.3)

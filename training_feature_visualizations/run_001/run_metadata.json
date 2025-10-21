@@ -1,0 +1,9 @@
+{
+  "run_directory": "training_feature_visualizations/run_001",
+  "num_classes": 2,
+  "method": "tsne",
+  "enable_gradcam": true,
+  "gradcam_layer": "features.2",
+  "start_time": "2025-10-21T05:33:56.309650",
+  "has_umap": true
+}

@@ -1,0 +1,23 @@
+============================================================
+LATENT SPACE VISUALIZATION SUMMARY
+============================================================
+Checkpoint: best_4cls_1503ex_380bins_epoch098_val0.8605.pt
+Output directory: visualizations/best_4cls_acc86.05%
+Method: UMAP
+Classes: 4
+Validation accuracy: 86.05%
+Total samples: 546
+
+Per-class performance:
+  AGN                 : 249/268 correct (92.91%)
+  HM/LM/YSO           : 201/238 correct (84.45%)
+  CV                  :   1/ 20 correct (5.00%)
+  NS/HMXB/LMXB/NS_BIN :   5/ 20 correct (25.00%)
+
+Most confused pairs:
+  HM/LM/YSO       → AGN            :  33 errors
+  CV              → AGN            :  15 errors
+  AGN             → HM/LM/YSO      :  15 errors
+  NS/HMXB/LMXB/NS_BIN → HM/LM/YSO      :   9 errors
+  NS/HMXB/LMXB/NS_BIN → AGN            :   6 errors
+============================================================
