@@ -13,7 +13,7 @@ LABEL_MAP = {
     "AGN": 0,
     "HM-STAR": 1,
     "LM-STAR": 1,
-    "YSO": 2,
+    "YSO": 1,      # Grouped with HM/LM
     "CV": 2,
     "NS": 3,
     "HMXB": 3,

@@ -184,7 +184,7 @@ def main():
 
     # Train + checkpoints
     os.makedirs(args.out_dir, exist_ok=True)
-    best = {"acc": -1.0, "state": None}
+    best = {"acc": -1.0, "state": None, "epoch": 0, "loss": float('inf')}
     tag = f"{args.classes}cls_{len(y_filtered)}ex_{X_filtered.shape[1]}bins"
 
     for epoch in range(1, args.epochs + 1):
@@ -214,15 +214,19 @@ def main():
 
         # Save BEST checkpoint by val_acc
         if va_acc > best["acc"]:
-            best = {"acc": va_acc, "state": {k: v.cpu() for k, v in model.state_dict().items()}}
-            best_epoch = epoch
+            best = {
+                "acc": va_acc, 
+                "loss": va_loss,
+                "epoch": epoch,
+                "state": {k: v.cpu() for k, v in model.state_dict().items()}
+            }
             best_ckpt_path = os.path.join(args.out_dir, f"best_{tag}_val{va_acc:.4f}.pt")
             torch.save({
                 "state_dict": best["state"],
                 "num_classes": num_classes,
                 "class_names": CLASS_NAMES,
                 "args": vars(args),
-                "best_epoch": best_epoch,
+                "best_epoch": epoch,
             }, best_ckpt_path)
             print(f"  ↳ Saved BEST checkpoint: {best_ckpt_path} (val_acc={va_acc:.4f})")
 
@@ -230,6 +234,7 @@ def main():
     if best["state"] is not None:
         model.load_state_dict(best["state"])
         model.to(device)
+        print(f"\n✅ Loaded BEST model from epoch {best['epoch']} (val_acc={best['acc']:.4f}, val_loss={best['loss']:.4f})")
 
     # Also save LAST checkpoint for reproducibility
     last_ckpt_path = os.path.join(args.out_dir, f"last_{tag}_val{va_acc:.4f}.pt")
@@ -238,11 +243,12 @@ def main():
         "num_classes": num_classes,
         "class_names": CLASS_NAMES,
         "args": vars(args),
+        "last_epoch": epoch,
     }, last_ckpt_path)
     print(f"Saved LAST checkpoint: {last_ckpt_path}")
 
 
-    # 9) Final validation metrics ----------------------------------------------------
+    # 9) Final validation metrics (BEST MODEL) ---------------------------------------
     model.eval()
     with torch.no_grad():
         y_pred = []
@@ -253,8 +259,10 @@ def main():
         y_pred = np.concatenate(y_pred) if y_pred else np.array([], dtype=int)
 
     acc = accuracy_score(yva, y_pred)
-    print("\n=== Validation Metrics ===")
-    print(f"Accuracy: {acc:.4f}")
+    print("\n" + "="*70)
+    print(f"=== BEST MODEL Validation Metrics (Epoch {best['epoch']}) ===")
+    print("="*70)
+    print(f"Accuracy: {best['acc']:.4f}")
     print("\nClassification report:")
     print(classification_report(yva, y_pred, target_names=target_names, digits=4))
     print("Confusion matrix:\n", confusion_matrix(yva, y_pred))

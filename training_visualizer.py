@@ -488,8 +488,8 @@ class TrainingVisualizer:
                         true_label = sample_labels[i]
                         pred_label = sample_preds[i]
                         
-                        # Create log-scale x-axis from 0.5 to 10 keV with 380 bins
-                        bins = np.logspace(np.log10(0.5), np.log10(10), len(spectrum))
+                        # Create linearly-spaced bins from 0.5 to 10 keV, displayed on log scale
+                        bins = np.linspace(0.5, 10, len(spectrum))
                         
                         # Plot spectrum
                         ax.plot(bins, spectrum, 'b-', linewidth=1, alpha=0.7, label='Spectrum')
