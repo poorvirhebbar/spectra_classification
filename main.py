@@ -34,6 +34,8 @@ def parse_args():
                     help="Target ratio for minority class oversampling (0.7 = 70% of majority)")
     ap.add_argument("--focal_gamma", type=float, default=2.0,
                     help="Focal loss gamma parameter (higher = more focus on hard examples)")
+    ap.add_argument("--minority_boost", type=float, default=1.0,
+                    help="Extra weight multiplier for CV/NS classes in 4-class mode (default: 20.0)")
     ap.add_argument("--visualize_training", action="store_true",
                     help="Enable real-time latent space visualization during training")
     ap.add_argument("--viz_every", type=int, default=5,
@@ -138,6 +140,17 @@ def main():
     # Compute class weights from **training** labels (helps minority recall)
     class_counts = np.bincount(ytr, minlength=num_classes)
     class_weights = (class_counts.sum() / (class_counts + 1e-8)).astype(np.float32)
+    
+    # AGGRESSIVE BOOST for extremely rare classes (CV, NS) in 4-class mode
+    if num_classes == 4 and args.minority_boost > 1.0:
+        print(f"\n⚠️  APPLYING AGGRESSIVE CLASS WEIGHTS for minority classes:")
+        print(f"   Original weights: {class_weights}")
+        # Boost CV (class 2) and NS (class 3) 
+        class_weights[2] *= args.minority_boost  # CV
+        class_weights[3] *= args.minority_boost  # NS/HMXB/etc
+        print(f"   Boosted weights (×{args.minority_boost}): {class_weights}")
+        print()
+    
     class_weights_t = torch.tensor(class_weights, dtype=torch.float32)  # CPU tensor for sampler; moved to device for loss
 
     # Balanced sampling: weight per-example = weight of its class

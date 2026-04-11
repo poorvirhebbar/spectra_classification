@@ -20,4 +20,23 @@ Most confused pairs:
   AGN             → HM/LM/YSO      :  15 errors
   NS/HMXB/LMXB/NS_BIN → HM/LM/YSO      :   9 errors
   NS/HMXB/LMXB/NS_BIN → AGN            :   6 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO                  CV NS/HMXB/LMXB/NS_BIN
+AGN                                  249                  15                   0                   4
+HM/LM/YSO                             33                 201                   0                   4
+CV                                    15                   3                   1                   1
+NS/HMXB/LMXB/NS_BIN                    6                   9                   0                   5
+
+Classification Report:
+                     precision    recall  f1-score   support
+
+                AGN     0.8218    0.9291    0.8722       268
+          HM/LM/YSO     0.8816    0.8445    0.8627       238
+                 CV     1.0000    0.0500    0.0952        20
+NS/HMXB/LMXB/NS_BIN     0.3571    0.2500    0.2941        20
+
+           accuracy                         0.8352       546
+          macro avg     0.7651    0.5184    0.5310       546
+       weighted avg     0.8374    0.8352    0.8184       546
 ============================================================

@@ -13,6 +13,7 @@ import seaborn as sns
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
 import os
 import re
 from sklearn.manifold import TSNE
@@ -426,7 +427,22 @@ def main():
         confusion_pairs.sort(reverse=True)
         for count, true_class, pred_class in confusion_pairs[:5]:
             f.write(f"  {CLASS_NAMES[true_class]:15s} → {CLASS_NAMES[pred_class]:15s}: {count:3d} errors\n")
-        
+
+        # Confusion matrix
+        unique_classes = sorted(np.unique(np.concatenate([labels, predictions])))
+        target_names = [CLASS_NAMES[c] for c in unique_classes]
+        cm = confusion_matrix(labels, predictions, labels=unique_classes)
+
+        f.write("\nConfusion Matrix:\n")
+        f.write(f"{'':20s}" + "".join(f"{name:>20s}" for name in target_names) + "\n")
+        for i, row_class in enumerate(unique_classes):
+            f.write(f"{CLASS_NAMES[row_class]:20s}" + "".join(f"{cm[i, j]:20d}" for j in range(len(unique_classes))) + "\n")
+
+        # Classification report
+        f.write("\nClassification Report:\n")
+        f.write(classification_report(labels, predictions, labels=unique_classes,
+                                      target_names=target_names, digits=4))
+
         f.write("="*60 + "\n")
     
     print("\n✅ Visualization complete!")
