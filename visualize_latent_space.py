@@ -309,7 +309,8 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize latent space of trained model")
     parser.add_argument("--checkpoint", required=True, help="Path to trained model checkpoint")
     parser.add_argument("--classes", choices=["2", "4"], default="4", help="Number of classes")
-    parser.add_argument("--data", default="data/Brightpn_id_normspec_counts_label_onlylabelled.txt")
+    parser.add_argument("--data", default=None,
+                       help="Data file path. Auto-detected from checkpoint name if not specified.")
     parser.add_argument("--method", choices=["umap", "tsne"], default="umap", 
                        help="Dimensionality reduction method")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -327,7 +328,16 @@ def main():
     print(f"\nLoading checkpoint from {args.checkpoint}...")
     checkpoint = torch.load(args.checkpoint, map_location=device)
     num_classes = checkpoint['num_classes']
-    
+
+    # Auto-detect data file from checkpoint name if not specified
+    if args.data is None:
+        ckpt_name = Path(args.checkpoint).name
+        if "Brightmos" in ckpt_name or checkpoint.get('data') == "Brightmos":
+            args.data = "data/Brightmos_id_normspec_counts_label_onlylabelled.txt"
+        else:
+            args.data = "data/Brightpn_id_normspec_counts_label_onlylabelled.txt"
+        print(f"Auto-detected data file: {args.data}")
+
     # Load data
     print(f"Loading data from {args.data}...")
     X_all, y_all, src_ids, counts = load_combined_data(args.data)
