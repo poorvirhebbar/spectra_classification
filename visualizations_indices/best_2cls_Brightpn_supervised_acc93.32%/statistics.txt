@@ -1,0 +1,33 @@
+============================================================
+LATENT SPACE VISUALIZATION SUMMARY
+============================================================
+Checkpoint: best_2cls_2532ex_380bins_epoch066_val0.9332.pt
+Output directory: visualizations_indices/best_2cls_Brightpn_supervised_acc93.32%
+Method: UMAP
+Classes: 2
+Validation accuracy: 93.32%
+Total samples: 509
+
+Per-class performance:
+  AGN                 : 276/285 correct (96.84%)
+  HM/LM/YSO           : 199/224 correct (88.84%)
+
+Most confused pairs:
+  HM/LM/YSO       → AGN            :  25 errors
+  AGN             → HM/LM/YSO      :   9 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO
+AGN                                  276                   9
+HM/LM/YSO                             25                 199
+
+Classification Report:
+              precision    recall  f1-score   support
+
+         AGN     0.9169    0.9684    0.9420       285
+   HM/LM/YSO     0.9567    0.8884    0.9213       224
+
+    accuracy                         0.9332       509
+   macro avg     0.9368    0.9284    0.9316       509
+weighted avg     0.9345    0.9332    0.9329       509
+============================================================

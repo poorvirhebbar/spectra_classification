@@ -203,6 +203,64 @@ def oversample_minority_classes(X: np.ndarray, y: np.ndarray,
 # Semi-supervised learning utilities: Load data with unlabelled samples
 # ============================================================================
 
+def load_indices(path: str) -> np.ndarray:
+    """Load row indices from a text file (values may be in scientific notation)."""
+    arr = np.loadtxt(path)
+    return np.round(arr).astype(np.int64)
+
+
+def load_data_with_row_indices(data_path: str):
+    """
+    Load full data file (labelled + unlabelled) preserving each sample's
+    original row index in the source file. Used together with `load_indices`
+    to apply external train/test splits.
+
+    Returns:
+        X_lab, y_lab, src_ids_lab, counts_lab, row_idx_lab,
+        X_unlab, src_ids_unlab, counts_unlab, row_idx_unlab
+    """
+    df = pd.read_csv(data_path, sep=r"\s+", header=None, dtype=str, engine="python")
+
+    src_ids = df.iloc[:, 0].astype(str).values
+    X = df.iloc[:, 1:-2].astype(np.float32).values
+    counts = df.iloc[:, -2].astype(np.float32).values
+
+    if df.shape[1] >= 383:
+        labels_raw = df.iloc[:, -1].astype(str).values
+    else:
+        labels_raw = np.array([''] * len(df))
+
+    is_labelled = np.array([
+        label not in ['', 'nan', 'NaN', 'NONE', 'None']
+        for label in labels_raw
+    ])
+
+    row_indices_all = np.arange(len(df), dtype=np.int64)
+
+    X_lab = X[is_labelled]
+    src_ids_lab = src_ids[is_labelled]
+    counts_lab = counts[is_labelled]
+    row_idx_lab = row_indices_all[is_labelled]
+    labels_lab_raw = labels_raw[is_labelled]
+
+    X_unlab = X[~is_labelled]
+    src_ids_unlab = src_ids[~is_labelled]
+    counts_unlab = counts[~is_labelled]
+    row_idx_unlab = row_indices_all[~is_labelled]
+
+    if len(X_lab) > 0:
+        norm_labels = np.array([_normalize_label(l) for l in labels_lab_raw])
+        y_lab = np.array([LABEL_MAP.get(l, -1) for l in norm_labels], dtype=np.int64)
+        unknown_mask = y_lab == -1
+        if unknown_mask.any():
+            raise ValueError(f"Found unknown labels: {np.unique(norm_labels[unknown_mask])}")
+    else:
+        y_lab = np.array([], dtype=np.int64)
+
+    return (X_lab, y_lab, src_ids_lab, counts_lab, row_idx_lab,
+            X_unlab, src_ids_unlab, counts_unlab, row_idx_unlab)
+
+
 def load_data_with_unlabelled(data_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load data file that contains BOTH labelled and unlabelled samples.

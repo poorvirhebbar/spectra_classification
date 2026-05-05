@@ -9,8 +9,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 from utils.model_utils import CNN1D, FocalLoss, train_one_epoch, evaluate
-from utils.data_utils import (load_combined_data, filter_and_remap, make_tensors, 
-                               oversample_minority_classes)
+from utils.data_utils import (load_combined_data, filter_and_remap, make_tensors,
+                               oversample_minority_classes,
+                               load_indices, load_data_with_row_indices)
 from training_visualizer import TrainingVisualizer, should_visualize
 
 torch.manual_seed(42); np.random.seed(42)
@@ -53,63 +54,150 @@ def parse_args():
                     help="Dataset to use: 'Brightmos' or 'Brightpn' (default: Brightpn)")
     ap.add_argument("--data_dir", default="data",
                     help="Directory containing data files (default: data)")
+    ap.add_argument("--use_indices", action="store_true",
+                    help="Use predefined train/test indices from --indices_dir instead of a random split")
+    ap.add_argument("--indices_dir", default="data/data_indices",
+                    help="Directory holding Train_*/Test_* index files (default: data/data_indices)")
     return ap.parse_args()
+
+
+def _index_file_paths(indices_dir: str, data: str, classes: str):
+    """Resolve the train/test index file paths for the given dataset and class config."""
+    if data == "Brightmos":
+        train_name = f"Train_MOS_index_{classes}class.txt"
+        test_name = f"Test_MOS_index_{classes}class.txt"
+    elif data == "Brightpn":
+        train_name = f"Train_PN_indices_{classes}class.txt"
+        test_name = f"Test_PN_indices_{classes}class.txt"
+    else:
+        raise ValueError(f"Unknown data choice: {data}")
+    return f"{indices_dir}/{train_name}", f"{indices_dir}/{test_name}"
 
 def main():
     args = parse_args()
     device = torch.device(args.device)
 
-    # Choose data file based on --data argument
-    data_file = f"{args.data_dir}/{args.data}_id_normspec_counts_label_onlylabelled.txt"
+    # When --use_indices is set and out_dir is the default, route checkpoints to checkpoints_indices/
+    if args.use_indices and args.out_dir == "checkpoints":
+        args.out_dir = "checkpoints_indices"
 
-    # Load data from single file
-    print(f"Loading data from {data_file}...")
-    X_all, y_all, src_ids, counts = load_combined_data(data_file)
-    
-    print(f"Loaded {len(y_all)} labeled spectra, each with {X_all.shape[1]} bins")
-    
-    # Debug: distribution
-    vals, cnts = np.unique(y_all, return_counts=True)
-    dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
-    print(f"Label distribution: {dist}")
-
-    # Filter and remap based on class mode
+    # Class config (shared across both branches)
     if args.classes == "2":
         mode = "12"
         num_classes = 2
     else:
         mode = "all4"
         num_classes = 4
-    
-    y_filtered, printable_map, target_names = filter_and_remap(y_all, mode)
-    
-    # Apply the same filtering to X, src_ids, and counts
-    if args.classes == "2":
-        mask = np.isin(y_all, [0, 1])
-        X_filtered = X_all[mask]
-        src_ids_filtered = src_ids[mask]
-        counts_filtered = counts[mask]
+
+    if args.use_indices:
+        # Load full file (labelled + unlabelled), keep original row indices for matching against index files
+        data_file = f"{args.data_dir}/{args.data}_id_normspec_counts_label.txt"
+        print(f"Loading data from {data_file} (use_indices=True)...")
+        (X_lab, y_lab, src_ids_lab, counts_lab, row_idx_lab,
+         _Xu, _su, _cu, _ru) = load_data_with_row_indices(data_file)
+        print(f"Loaded {len(y_lab)} labelled spectra, each with {X_lab.shape[1]} bins")
+
+        vals, cnts = np.unique(y_lab, return_counts=True)
+        dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
+        print(f"Label distribution (all labelled): {dist}")
+
+        # Get target_names/printable_map via the same helper used elsewhere
+        _, printable_map, target_names = filter_and_remap(y_lab, mode)
+
+        # Resolve and load index files
+        train_idx_path, test_idx_path = _index_file_paths(args.indices_dir, args.data, args.classes)
+        print(f"Loading indices: {train_idx_path}, {test_idx_path}")
+        train_indices = load_indices(train_idx_path)
+        test_indices = load_indices(test_idx_path)
+        print(f"  train indices: {len(train_indices)}; test indices: {len(test_indices)}")
+
+        # Split labelled rows by their original row index
+        train_mask = np.isin(row_idx_lab, train_indices)
+        test_mask = np.isin(row_idx_lab, test_indices)
+
+        # Sanity: warn if any indices didn't map to a labelled row
+        n_train_hit = train_mask.sum()
+        n_test_hit = test_mask.sum()
+        if n_train_hit != len(train_indices):
+            print(f"  ⚠️  {len(train_indices) - n_train_hit} train indices did not match a labelled row")
+        if n_test_hit != len(test_indices):
+            print(f"  ⚠️  {len(test_indices) - n_test_hit} test indices did not match a labelled row")
+
+        Xtr = X_lab[train_mask]
+        ytr = y_lab[train_mask]
+        src_ids_tr = src_ids_lab[train_mask]
+        counts_tr = counts_lab[train_mask]
+
+        Xva = X_lab[test_mask]
+        yva = y_lab[test_mask]
+        src_ids_va = src_ids_lab[test_mask]
+        counts_va = counts_lab[test_mask]
+
+        # The 2-class index files already exclude CV/NS, but apply a defensive filter
+        if args.classes == "2":
+            m_tr = np.isin(ytr, [0, 1])
+            Xtr, ytr, src_ids_tr, counts_tr = Xtr[m_tr], ytr[m_tr], src_ids_tr[m_tr], counts_tr[m_tr]
+            m_va = np.isin(yva, [0, 1])
+            Xva, yva, src_ids_va, counts_va = Xva[m_va], yva[m_va], src_ids_va[m_va], counts_va[m_va]
+
+        # Aliases used downstream for the checkpoint tag and sanity checks
+        y_filtered = np.concatenate([ytr, yva])
+        X_filtered = np.concatenate([Xtr, Xva], axis=0)
+
+        if len(y_filtered) == 0:
+            print("No data to train on after applying indices. Exiting.")
+            return
+        if len(np.unique(y_filtered)) < num_classes:
+            print(f"Only found classes {sorted(np.unique(y_filtered).tolist())} after applying indices, "
+                  f"but num_classes={num_classes}. Exiting.")
+            return
+
+        print(f"Training on {len(ytr)} samples; validating/testing on {len(yva)} samples "
+              f"(total labelled used: {len(y_filtered)}, classes: {num_classes}).")
     else:
-        X_filtered = X_all
-        src_ids_filtered = src_ids
-        counts_filtered = counts
-        y_filtered = y_all
+        # Choose data file based on --data argument
+        data_file = f"{args.data_dir}/{args.data}_id_normspec_counts_label_onlylabelled.txt"
 
-    if len(y_filtered) == 0:
-        print("No data to train on after class filtering. Exiting.")
-        return
-    if len(np.unique(y_filtered)) < num_classes:
-        print(f"Only found classes {sorted(np.unique(y_filtered).tolist())} after filtering, "
-              f"but num_classes={num_classes}. Exiting.")
-        return
+        # Load data from single file
+        print(f"Loading data from {data_file}...")
+        X_all, y_all, src_ids, counts = load_combined_data(data_file)
 
-    print(f"Training on {len(y_filtered)} labeled spectra across {num_classes} classes.")
+        print(f"Loaded {len(y_all)} labeled spectra, each with {X_all.shape[1]} bins")
 
-    # Split data
-    Xtr, Xva, ytr, yva, src_ids_tr, src_ids_va, counts_tr, counts_va = train_test_split(
-        X_filtered, y_filtered, src_ids_filtered, counts_filtered,
-        test_size=args.val_split, random_state=42, stratify=y_filtered
-    )
+        # Debug: distribution
+        vals, cnts = np.unique(y_all, return_counts=True)
+        dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
+        print(f"Label distribution: {dist}")
+
+        y_filtered, printable_map, target_names = filter_and_remap(y_all, mode)
+
+        # Apply the same filtering to X, src_ids, and counts
+        if args.classes == "2":
+            mask = np.isin(y_all, [0, 1])
+            X_filtered = X_all[mask]
+            src_ids_filtered = src_ids[mask]
+            counts_filtered = counts[mask]
+        else:
+            X_filtered = X_all
+            src_ids_filtered = src_ids
+            counts_filtered = counts
+            y_filtered = y_all
+
+        if len(y_filtered) == 0:
+            print("No data to train on after class filtering. Exiting.")
+            return
+        if len(np.unique(y_filtered)) < num_classes:
+            print(f"Only found classes {sorted(np.unique(y_filtered).tolist())} after filtering, "
+                  f"but num_classes={num_classes}. Exiting.")
+            return
+
+        print(f"Training on {len(y_filtered)} labeled spectra across {num_classes} classes.")
+
+        # Split data
+        Xtr, Xva, ytr, yva, src_ids_tr, src_ids_va, counts_tr, counts_va = train_test_split(
+            X_filtered, y_filtered, src_ids_filtered, counts_filtered,
+            test_size=args.val_split, random_state=42, stratify=y_filtered
+        )
     
     # Apply data augmentation and oversampling for minority classes (4-class mode only)
     if args.classes == "4":

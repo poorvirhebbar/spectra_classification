@@ -20,7 +20,8 @@ from sklearn.manifold import TSNE
 from pathlib import Path
 
 from utils.model_utils import CNN1D
-from utils.data_utils import load_combined_data, filter_and_remap, make_tensors
+from utils.data_utils import (load_combined_data, filter_and_remap, make_tensors,
+                              load_indices, load_data_with_row_indices)
 
 # Try to import UMAP, fall back to t-SNE if not available
 try:
@@ -86,29 +87,52 @@ def parse_checkpoint_name(checkpoint_path):
     return info
 
 
-def create_output_directory(checkpoint_path):
+def create_output_directory(checkpoint_path, root_dir="visualizations",
+                            data_choice=None, training_kind=None):
     """
     Create output directory based on checkpoint name.
-    
-    Returns: Path to the output directory
+
+    Args:
+        checkpoint_path: path to checkpoint .pt file
+        root_dir: top-level visualizations folder (e.g. "visualizations" or "visualizations_indices")
+        data_choice: "Brightmos" / "Brightpn" — included in subdir name when provided
+        training_kind: "supervised" / "semisup" — included in subdir name when provided
+
+    Returns: (output_dir Path, info dict)
     """
     info = parse_checkpoint_name(checkpoint_path)
-    
-    # Create main visualization directory
-    vis_dir = Path("visualizations")
+
+    vis_dir = Path(root_dir)
     vis_dir.mkdir(exist_ok=True)
-    
-    # Create subdirectory based on checkpoint
-    # Format: visualizations/best_4cls_acc85.67/
+
     if 'accuracy_pct' in info:
-        subdir_name = f"{info['type']}_{info.get('classes', 'unknown')}_acc{info['accuracy_pct']}"
+        parts = [info['type'], info.get('classes', 'unknown')]
+        if data_choice:
+            parts.append(data_choice)
+        if training_kind:
+            parts.append(training_kind)
+        parts.append(f"acc{info['accuracy_pct']}")
+        subdir_name = "_".join(parts)
     else:
         subdir_name = info['basename']
-    
+
     output_dir = vis_dir / subdir_name
     output_dir.mkdir(exist_ok=True)
-    
+
     return output_dir, info
+
+
+def _index_file_paths(indices_dir: str, data: str, classes: str):
+    """Resolve the train/test index file paths for the given dataset and class config."""
+    if data == "Brightmos":
+        train_name = f"Train_MOS_index_{classes}class.txt"
+        test_name = f"Test_MOS_index_{classes}class.txt"
+    elif data == "Brightpn":
+        train_name = f"Train_PN_indices_{classes}class.txt"
+        test_name = f"Test_PN_indices_{classes}class.txt"
+    else:
+        raise ValueError(f"Unknown data choice: {data}")
+    return f"{indices_dir}/{train_name}", f"{indices_dir}/{test_name}"
 
 
 def extract_features(model, dataloader, device):
@@ -308,66 +332,128 @@ def print_statistics(labels, predictions):
 def main():
     parser = argparse.ArgumentParser(description="Visualize latent space of trained model")
     parser.add_argument("--checkpoint", required=True, help="Path to trained model checkpoint")
-    parser.add_argument("--classes", choices=["2", "4"], default="4", help="Number of classes")
+    parser.add_argument("--classes", choices=["2", "4"], default=None,
+                       help="Number of classes. Auto-detected from checkpoint if not given.")
     parser.add_argument("--data", default=None,
-                       help="Data file path. Auto-detected from checkpoint name if not specified.")
-    parser.add_argument("--method", choices=["umap", "tsne"], default="umap", 
+                       help="Data file path. Auto-detected from checkpoint args if not specified.")
+    parser.add_argument("--data_choice", choices=["Brightmos", "Brightpn"], default=None,
+                       help="Dataset name. Auto-detected from checkpoint args if not specified.")
+    parser.add_argument("--method", choices=["umap", "tsne"], default="umap",
                        help="Dimensionality reduction method")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--val_split", type=float, default=0.2)
+    parser.add_argument("--use_indices", action="store_true",
+                       help="Build eval set from test indices file (matches --use_indices training)")
+    parser.add_argument("--indices_dir", default="data/data_indices",
+                       help="Directory holding Train_*/Test_* index files")
+    parser.add_argument("--data_dir", default="data",
+                       help="Directory containing data files (default: data)")
     args = parser.parse_args()
-    
+
     device = torch.device(args.device)
-    
-    # Create output directory based on checkpoint name
-    output_dir, checkpoint_info = create_output_directory(args.checkpoint)
+
+    # Load checkpoint first so we can auto-detect args
+    print(f"\nLoading checkpoint from {args.checkpoint}...")
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    num_classes = checkpoint['num_classes']
+    ckpt_args = checkpoint.get('args', {}) or {}
+
+    # Auto-detect classes
+    if args.classes is None:
+        cls_from_ckpt = ckpt_args.get('classes')
+        if cls_from_ckpt in ("2", "4"):
+            args.classes = cls_from_ckpt
+        else:
+            args.classes = "4" if num_classes == 4 else "2"
+        print(f"Auto-detected classes: {args.classes}")
+
+    # Auto-detect data choice
+    if args.data_choice is None:
+        if ckpt_args.get('data') in ("Brightmos", "Brightpn"):
+            args.data_choice = ckpt_args['data']
+        else:
+            ckpt_name = Path(args.checkpoint).name
+            args.data_choice = "Brightmos" if "Brightmos" in ckpt_name else "Brightpn"
+        print(f"Auto-detected data choice: {args.data_choice}")
+
+    # Auto-detect use_indices from checkpoint args (allow CLI flag to override)
+    if not args.use_indices and ckpt_args.get('use_indices'):
+        args.use_indices = True
+        print("Auto-detected use_indices=True from checkpoint args")
+
+    # Detect supervised vs semi-supervised from checkpoint filename
+    training_kind = "semisup" if "semisup" in Path(args.checkpoint).name else "supervised"
+
+    # Resolve output root directory
+    root_dir = "visualizations_indices" if args.use_indices else "visualizations"
+
+    # Create output directory based on checkpoint name + run identifiers
+    output_dir, checkpoint_info = create_output_directory(
+        args.checkpoint, root_dir=root_dir,
+        data_choice=args.data_choice if args.use_indices else None,
+        training_kind=training_kind if args.use_indices else None,
+    )
     print(f"\n📁 Output directory: {output_dir}")
     print(f"   Checkpoint info: {checkpoint_info}")
-    
-    # Load checkpoint
-    print(f"\nLoading checkpoint from {args.checkpoint}...")
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    num_classes = checkpoint['num_classes']
 
-    # Auto-detect data file from checkpoint name if not specified
-    if args.data is None:
-        ckpt_name = Path(args.checkpoint).name
-        if "Brightmos" in ckpt_name or checkpoint.get('data') == "Brightmos":
-            args.data = "data/Brightmos_id_normspec_counts_label_onlylabelled.txt"
-        else:
-            args.data = "data/Brightpn_id_normspec_counts_label_onlylabelled.txt"
-        print(f"Auto-detected data file: {args.data}")
-
-    # Load data
-    print(f"Loading data from {args.data}...")
-    X_all, y_all, src_ids, counts = load_combined_data(args.data)
-    
-    # Filter based on class mode
-    if args.classes == "2":
-        mode = "12"
-        mask = np.isin(y_all, [0, 1])
-        X_filtered = X_all[mask]
-        y_filtered, _, target_names = filter_and_remap(y_all, mode)
-    else:
-        X_filtered = X_all
-        y_filtered = y_all
-        _, _, target_names = filter_and_remap(y_all, "all4")
-    
-    print(f"Using {len(y_filtered)} samples across {num_classes} classes")
-    
-    # Split data (same split as training)
-    Xtr, Xva, ytr, yva = train_test_split(X_filtered, y_filtered, test_size=args.val_split,
-                                          random_state=42, stratify=y_filtered)
-    
-    # Normalize
+    # ------------------------------------------------------------------
+    # Build the evaluation set: either via test indices, or via random val split
+    # ------------------------------------------------------------------
     def norm_per_sample(A):
         mu = A.mean(axis=1, keepdims=True)
         sigma = A.std(axis=1, keepdims=True) + 1e-8
         return (A - mu) / sigma
-    
+
+    if args.use_indices:
+        full_path = args.data or f"{args.data_dir}/{args.data_choice}_id_normspec_counts_label.txt"
+        print(f"Loading full data from {full_path}...")
+        (X_lab, y_lab, _src_lab, _cnt_lab, row_idx_lab,
+         _Xu, _su, _cu, _ru) = load_data_with_row_indices(full_path)
+
+        _, _, target_names = filter_and_remap(y_lab, "12" if args.classes == "2" else "all4")
+
+        _, test_idx_path = _index_file_paths(args.indices_dir, args.data_choice, args.classes)
+        print(f"Loading test indices: {test_idx_path}")
+        test_indices = load_indices(test_idx_path)
+
+        test_mask = np.isin(row_idx_lab, test_indices)
+        Xva = X_lab[test_mask]
+        yva = y_lab[test_mask]
+
+        if args.classes == "2":
+            m_va = np.isin(yva, [0, 1])
+            Xva, yva = Xva[m_va], yva[m_va]
+
+        print(f"Using {len(yva)} test samples across {num_classes} classes "
+              f"(from {test_idx_path})")
+    else:
+        # Auto-detect data file path
+        if args.data is None:
+            args.data = f"{args.data_dir}/{args.data_choice}_id_normspec_counts_label_onlylabelled.txt"
+            print(f"Auto-detected data file: {args.data}")
+
+        print(f"Loading data from {args.data}...")
+        X_all, y_all, src_ids, counts = load_combined_data(args.data)
+
+        # Filter based on class mode
+        if args.classes == "2":
+            mode = "12"
+            mask = np.isin(y_all, [0, 1])
+            X_filtered = X_all[mask]
+            y_filtered, _, target_names = filter_and_remap(y_all, mode)
+        else:
+            X_filtered = X_all
+            y_filtered = y_all
+            _, _, target_names = filter_and_remap(y_all, "all4")
+
+        print(f"Using {len(y_filtered)} samples across {num_classes} classes")
+
+        # Split data (same split as training)
+        Xtr, Xva, ytr, yva = train_test_split(X_filtered, y_filtered, test_size=args.val_split,
+                                              random_state=42, stratify=y_filtered)
+
+    # Normalize and build loader
     Xva = norm_per_sample(Xva)
-    
-    # Create tensors and dataloader
     Xva_t, yva_t = make_tensors(Xva, yva)
     val_loader = DataLoader(TensorDataset(Xva_t, yva_t), batch_size=64, shuffle=False)
     
