@@ -372,4 +372,74 @@ For issues or questions, refer to the documentation files above.
 python main.py --classes 4 --epochs 150 --oversample_target 1.0 --visualize_training
 ```
 
-Good luck! 🚀
+## New commands with indices for training
+
+### ---Supervised (main.py) ---           
+                                                                                                                                                                                         
+  ### 1. PN, 2-class
+  python main.py --use_indices --data Brightpn --classes 2                                                                                                                               
+                                                                                                                                                                                         
+  ### 2. PN, 4-class                                                                                                                                                                       
+  python main.py --use_indices --data Brightpn --classes 4                                                                                                                               
+                                                            
+  ### 3. MOS, 2-class
+  python main.py --use_indices --data Brightmos --classes 2
+                                                                                                                                                                                         
+  ### 4. MOS, 4-class
+  python main.py --use_indices --data Brightmos --classes 4                                                                                                                              
+                                                            
+### --- Semi-supervised (main_unlabelled.py) ---                                                                                                                                  
+   
+  ### 5. PN, 2-class                                                                                                                                                                       
+  python main_unlabelled.py --use_indices --data Brightpn --classes 2
+
+  ### 6. PN, 4-class                                                                                                                                                                       
+  python main_unlabelled.py --use_indices --data Brightpn --classes 4
+                                                                                                                                                                                         
+  ### 7. MOS, 2-class                                         
+  python main_unlabelled.py --use_indices --data Brightmos --classes 2
+                                                                                                                                                                                         
+  ### 8. MOS, 4-class
+  python main_unlabelled.py --use_indices --data Brightmos --classes 4  
+
+## Training Results Summary
+
+![Training Results Summary](assets/training_results_summary.png)
+
+## Visualization and results
+
+### --- Supervised ---                                                                                                                                                                   
+  ### 1. PN 2cls                                                                                                                                                                           
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_2cls_2532ex_380bins_epoch066_val0.9332.pt                                                                       
+                                                                                                                                                                                         
+  ### 2. PN 4cls                                                                                                                                                                           
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_4cls_2730ex_380bins_epoch082_val0.8339.pt                                                                       
+                                                                                                                                                                                         
+  ### 3. MOS 2cls                                             
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_2cls_1341ex_380bins_epoch047_val0.9037.pt                                                                       
+                                                                                                                                                                                         
+  ### 4. MOS 4cls
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_4cls_1503ex_380bins_epoch029_val0.7733.pt                                                                       
+                                                                                                                                                                                         
+  ### --- Semi-supervised ---
+  ### 5. PN 2cls                                                                                                                                                                           
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_semisup_2cls_Brightpn_epoch012_val0.9234.pt
+                                                                                                                                                                                         
+  ### 6. PN 4cls
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_semisup_4cls_Brightpn_epoch067_val0.6460.pt                                                                     
+                                                                                                                                                                                         
+  ### 7. MOS 2cls
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_semisup_2cls_Brightmos_epoch028_val0.9000.pt                                                                    
+                                                                                                                                                                                         
+  ### 8. MOS 4cls
+  python visualize_latent_space.py --checkpoint checkpoints_indices/best_semisup_4cls_Brightmos_epoch040_val0.7500.pt                                                                    
+                                                                                                                                                                                         
+  Resulting folders will be:                                                                                                                                                             
+  - best_2cls_Brightpn_supervised_acc93.32%/                                                                                                                                             
+  - best_4cls_Brightpn_supervised_acc83.39%/                                                                                                                                             
+  - best_2cls_Brightmos_supervised_acc90.37%/               
+  - best_4cls_Brightmos_supervised_acc77.33%/                                                                                                                                            
+  - best_2cls_Brightpn_semisup_acc92.34%/    
+  - best_4cls_Brightpn_semisup_acc64.60%/                                                                                                                                                
+  - best_2cls_Brightmos_semisup_acc90.00%/                                                                                                                                               
+  - best_4cls_Brightmos_semisup_acc75.00%/  

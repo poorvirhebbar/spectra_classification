@@ -17,9 +17,10 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from pathlib import Path
 
 from utils.model_utils import CNN1D, FocalLoss, train_one_epoch, train_one_epoch_semisupervised, evaluate
-from utils.data_utils import (load_data_with_unlabelled, filter_and_remap, make_tensors, 
-                               oversample_minority_classes, create_test_set, 
-                               create_test_set_unlabelled, save_test_set, load_test_set)
+from utils.data_utils import (load_data_with_unlabelled, filter_and_remap, make_tensors,
+                               oversample_minority_classes, create_test_set,
+                               create_test_set_unlabelled, save_test_set, load_test_set,
+                               load_indices, load_data_with_row_indices)
 from utils.semisup_utils import (alpha_schedule, alpha_schedule_immediate, 
                                  get_confidence_thresholds, 
                                  compute_pseudo_label_stats, save_pseudo_labels)
@@ -102,8 +103,27 @@ def parse_args():
     ap.add_argument("--viz_every", type=int, default=5,
                     help="Visualize every N epochs")
     ap.add_argument("--viz_method", choices=["umap", "tsne"], default="tsne")
-    
+
+    # Index-based train/test split
+    ap.add_argument("--use_indices", action="store_true",
+                    help="Use predefined train/test indices from --indices_dir; skips held-out test sets")
+    ap.add_argument("--indices_dir", default="data/data_indices",
+                    help="Directory holding Train_*/Test_* index files (default: data/data_indices)")
+
     return ap.parse_args()
+
+
+def _index_file_paths(indices_dir: str, data: str, classes: str):
+    """Resolve the train/test index file paths for the given dataset and class config."""
+    if data == "Brightmos":
+        train_name = f"Train_MOS_index_{classes}class.txt"
+        test_name = f"Test_MOS_index_{classes}class.txt"
+    elif data == "Brightpn":
+        train_name = f"Train_PN_indices_{classes}class.txt"
+        test_name = f"Test_PN_indices_{classes}class.txt"
+    else:
+        raise ValueError(f"Unknown data choice: {data}")
+    return f"{indices_dir}/{train_name}", f"{indices_dir}/{test_name}"
 
 
 def norm_per_sample(A):
@@ -116,10 +136,15 @@ def norm_per_sample(A):
 def main():
     args = parse_args()
     device = torch.device(args.device)
-    
+
+    # When --use_indices is set and out_dir is the default, route checkpoints to checkpoints_indices/
+    if args.use_indices and args.out_dir == "checkpoints":
+        args.out_dir = "checkpoints_indices"
+
     # Create output directories
     os.makedirs(args.out_dir, exist_ok=True)
-    os.makedirs(args.test_set_dir, exist_ok=True)
+    if not args.use_indices:
+        os.makedirs(args.test_set_dir, exist_ok=True)
     
     # Data file paths
     data_file = f"{args.data_dir}/{args.data}_id_normspec_counts_label.txt"
@@ -133,101 +158,155 @@ def main():
     # ========================================================================
     # 1. Load data (labelled + unlabelled)
     # ========================================================================
-    print(f"\n📂 Loading data from {data_file}...")
-    X_lab_all, y_lab_all, src_ids_lab, counts_lab, X_unlab_all, src_ids_unlab, counts_unlab = load_data_with_unlabelled(data_file)
-    
-    # Filter and remap labels based on class mode
+    # Class config
     if args.classes == "2":
         mode = "12"
         num_classes = 2
     else:
         mode = "all4"
         num_classes = 4
-    
-    y_lab_filtered, printable_map, target_names = filter_and_remap(y_lab_all, mode)
-    
-    # Apply filtering to X_labelled
-    if args.classes == "2":
-        mask = np.isin(y_lab_all, [0, 1])
-        X_lab_filtered = X_lab_all[mask]
-        src_ids_lab_filtered = src_ids_lab[mask]
-        counts_lab_filtered = counts_lab[mask]
+
+    if args.use_indices:
+        # Use predefined train/test indices: train -> training; test -> validation/test (no held-out sets)
+        print(f"\n📂 Loading data from {data_file} (use_indices=True)...")
+        (X_lab, y_lab, src_ids_lab_all, counts_lab_all, row_idx_lab,
+         X_unlab_all, src_ids_unlab, counts_unlab, _row_idx_unlab) = load_data_with_row_indices(data_file)
+
+        _, printable_map, target_names = filter_and_remap(y_lab, mode)
+
+        train_idx_path, test_idx_path = _index_file_paths(args.indices_dir, args.data, args.classes)
+        print(f"Loading indices: {train_idx_path}, {test_idx_path}")
+        train_indices = load_indices(train_idx_path)
+        test_indices = load_indices(test_idx_path)
+        print(f"  train indices: {len(train_indices)}; test indices: {len(test_indices)}")
+
+        train_mask = np.isin(row_idx_lab, train_indices)
+        test_mask = np.isin(row_idx_lab, test_indices)
+
+        if train_mask.sum() != len(train_indices):
+            print(f"  ⚠️  {len(train_indices) - train_mask.sum()} train indices did not match a labelled row")
+        if test_mask.sum() != len(test_indices):
+            print(f"  ⚠️  {len(test_indices) - test_mask.sum()} test indices did not match a labelled row")
+
+        Xtr = X_lab[train_mask]
+        ytr = y_lab[train_mask]
+        src_ids_tr = src_ids_lab_all[train_mask]
+        counts_tr = counts_lab_all[train_mask]
+
+        Xva = X_lab[test_mask]
+        yva = y_lab[test_mask]
+        src_ids_va = src_ids_lab_all[test_mask]
+        counts_va = counts_lab_all[test_mask]
+
+        # Defensive 2-class filter (index files already drop CV/NS for 2cls)
+        if args.classes == "2":
+            m_tr = np.isin(ytr, [0, 1])
+            Xtr, ytr, src_ids_tr, counts_tr = Xtr[m_tr], ytr[m_tr], src_ids_tr[m_tr], counts_tr[m_tr]
+            m_va = np.isin(yva, [0, 1])
+            Xva, yva, src_ids_va, counts_va = Xva[m_va], yva[m_va], src_ids_va[m_va], counts_va[m_va]
+
+        print(f"\n📊 Data summary:")
+        print(f"  Train (from indices): {len(Xtr)} labelled samples")
+        print(f"  Val/Test (from indices): {len(Xva)} labelled samples")
+        print(f"  Unlabelled (all): {len(X_unlab_all)} samples")
+        print(f"  Classes: {num_classes}")
+
+        vals, cnts = np.unique(np.concatenate([ytr, yva]), return_counts=True)
+        dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
+        print(f"  Label distribution (train+test): {dist}")
+
+        # No held-out test sets in this mode
+        X_test_lab = y_test_lab = src_ids_test_lab = None
+        X_test_unlab = src_ids_test_unlab = None
+
     else:
-        X_lab_filtered = X_lab_all
-        src_ids_lab_filtered = src_ids_lab
-        counts_lab_filtered = counts_lab
-        y_lab_filtered = y_lab_all
-    
-    print(f"\n📊 Data summary:")
-    print(f"  Labelled: {len(X_lab_filtered)} samples")
-    print(f"  Unlabelled: {len(X_unlab_all)} samples")
-    print(f"  Classes: {num_classes}")
-    
-    # Class distribution
-    vals, cnts = np.unique(y_lab_filtered, return_counts=True)
-    dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
-    print(f"  Label distribution: {dist}")
-    
-    # ========================================================================
-    # 2. Create or load test sets
-    # ========================================================================
-    if args.load_test_set and os.path.exists(test_set_labelled_path):
-        print(f"\n📥 Loading existing test sets...")
-        X_test_lab, y_test_lab, src_ids_test_lab = load_test_set(test_set_labelled_path)
-        X_test_unlab, _, src_ids_test_unlab = load_test_set(test_set_unlabelled_path)
-        
-        # Remove test samples from training data (match by source IDs)
-        test_ids_set = set(src_ids_test_lab).union(set(src_ids_test_unlab))
-        
-        # Filter labelled data
-        mask_lab = ~np.isin(src_ids_lab_filtered, list(test_ids_set))
-        X_lab_filtered = X_lab_filtered[mask_lab]
-        y_lab_filtered = y_lab_filtered[mask_lab]
-        src_ids_lab_filtered = src_ids_lab_filtered[mask_lab]
-        counts_lab_filtered = counts_lab_filtered[mask_lab]
-        
-        # Filter unlabelled data
-        mask_unlab = ~np.isin(src_ids_unlab, list(test_ids_set))
-        X_unlab_all = X_unlab_all[mask_unlab]
-        src_ids_unlab = src_ids_unlab[mask_unlab]
-        
-    else:
-        print(f"\n🎲 Creating new test sets...")
-        
-        # Create test set from labelled data (stratified, 10 total samples)
-        (X_lab_filtered, y_lab_filtered, src_ids_lab_filtered, counts_lab_filtered,
-         X_test_lab, y_test_lab, src_ids_test_lab, counts_test_lab) = create_test_set(
+        print(f"\n📂 Loading data from {data_file}...")
+        X_lab_all, y_lab_all, src_ids_lab, counts_lab, X_unlab_all, src_ids_unlab, counts_unlab = load_data_with_unlabelled(data_file)
+
+        y_lab_filtered, printable_map, target_names = filter_and_remap(y_lab_all, mode)
+
+        # Apply filtering to X_labelled
+        if args.classes == "2":
+            mask = np.isin(y_lab_all, [0, 1])
+            X_lab_filtered = X_lab_all[mask]
+            src_ids_lab_filtered = src_ids_lab[mask]
+            counts_lab_filtered = counts_lab[mask]
+        else:
+            X_lab_filtered = X_lab_all
+            src_ids_lab_filtered = src_ids_lab
+            counts_lab_filtered = counts_lab
+            y_lab_filtered = y_lab_all
+
+        print(f"\n📊 Data summary:")
+        print(f"  Labelled: {len(X_lab_filtered)} samples")
+        print(f"  Unlabelled: {len(X_unlab_all)} samples")
+        print(f"  Classes: {num_classes}")
+
+        # Class distribution
+        vals, cnts = np.unique(y_lab_filtered, return_counts=True)
+        dist = {CLASS_NAMES[int(v)]: int(c) for v, c in zip(vals, cnts)}
+        print(f"  Label distribution: {dist}")
+
+        # ====================================================================
+        # 2. Create or load test sets
+        # ====================================================================
+        if args.load_test_set and os.path.exists(test_set_labelled_path):
+            print(f"\n📥 Loading existing test sets...")
+            X_test_lab, y_test_lab, src_ids_test_lab = load_test_set(test_set_labelled_path)
+            X_test_unlab, _, src_ids_test_unlab = load_test_set(test_set_unlabelled_path)
+
+            # Remove test samples from training data (match by source IDs)
+            test_ids_set = set(src_ids_test_lab).union(set(src_ids_test_unlab))
+
+            # Filter labelled data
+            mask_lab = ~np.isin(src_ids_lab_filtered, list(test_ids_set))
+            X_lab_filtered = X_lab_filtered[mask_lab]
+            y_lab_filtered = y_lab_filtered[mask_lab]
+            src_ids_lab_filtered = src_ids_lab_filtered[mask_lab]
+            counts_lab_filtered = counts_lab_filtered[mask_lab]
+
+            # Filter unlabelled data
+            mask_unlab = ~np.isin(src_ids_unlab, list(test_ids_set))
+            X_unlab_all = X_unlab_all[mask_unlab]
+            src_ids_unlab = src_ids_unlab[mask_unlab]
+
+        else:
+            print(f"\n🎲 Creating new test sets...")
+
+            # Create test set from labelled data (stratified, 10 total samples)
+            (X_lab_filtered, y_lab_filtered, src_ids_lab_filtered, counts_lab_filtered,
+             X_test_lab, y_test_lab, src_ids_test_lab, counts_test_lab) = create_test_set(
+                X_lab_filtered, y_lab_filtered, src_ids_lab_filtered, counts_lab_filtered,
+                n_samples_total=args.test_samples_labelled, random_state=42
+            )
+
+            # Create test set from unlabelled data (random)
+            (X_unlab_all, src_ids_unlab,
+             X_test_unlab, src_ids_test_unlab) = create_test_set_unlabelled(
+                X_unlab_all, src_ids_unlab,
+                n_samples=args.test_samples_unlabelled, random_state=42
+            )
+
+            # Save test sets
+            save_test_set(X_test_lab, y_test_lab, src_ids_test_lab,
+                         test_set_labelled_path, CLASS_NAMES)
+            save_test_set(X_test_unlab, None, src_ids_test_unlab,
+                         test_set_unlabelled_path, None)
+
+        print(f"\n✅ Test sets ready:")
+        print(f"  Labelled test: {len(X_test_lab)} samples")
+        print(f"  Unlabelled test: {len(X_test_unlab)} samples")
+        print(f"  Remaining for training:")
+        print(f"    Labelled: {len(X_lab_filtered)} samples")
+        print(f"    Unlabelled: {len(X_unlab_all)} samples")
+
+        # ====================================================================
+        # 3. Split labelled data into train/val
+        # ====================================================================
+        Xtr, Xva, ytr, yva, src_ids_tr, src_ids_va, counts_tr, counts_va = train_test_split(
             X_lab_filtered, y_lab_filtered, src_ids_lab_filtered, counts_lab_filtered,
-            n_samples_total=args.test_samples_labelled, random_state=42
+            test_size=args.val_split, random_state=42, stratify=y_lab_filtered
         )
-        
-        # Create test set from unlabelled data (random)
-        (X_unlab_all, src_ids_unlab, 
-         X_test_unlab, src_ids_test_unlab) = create_test_set_unlabelled(
-            X_unlab_all, src_ids_unlab, 
-            n_samples=args.test_samples_unlabelled, random_state=42
-        )
-        
-        # Save test sets
-        save_test_set(X_test_lab, y_test_lab, src_ids_test_lab, 
-                     test_set_labelled_path, CLASS_NAMES)
-        save_test_set(X_test_unlab, None, src_ids_test_unlab, 
-                     test_set_unlabelled_path, None)
-    
-    print(f"\n✅ Test sets ready:")
-    print(f"  Labelled test: {len(X_test_lab)} samples")
-    print(f"  Unlabelled test: {len(X_test_unlab)} samples")
-    print(f"  Remaining for training:")
-    print(f"    Labelled: {len(X_lab_filtered)} samples")
-    print(f"    Unlabelled: {len(X_unlab_all)} samples")
-    
-    # ========================================================================
-    # 3. Split labelled data into train/val
-    # ========================================================================
-    Xtr, Xva, ytr, yva, src_ids_tr, src_ids_va, counts_tr, counts_va = train_test_split(
-        X_lab_filtered, y_lab_filtered, src_ids_lab_filtered, counts_lab_filtered,
-        test_size=args.val_split, random_state=42, stratify=y_lab_filtered
-    )
     
     # Apply oversampling for 4-class mode
     if args.classes == "4":
@@ -247,8 +326,10 @@ def main():
     Xtr = norm_per_sample(Xtr)
     Xva = norm_per_sample(Xva)
     X_unlab_all = norm_per_sample(X_unlab_all)
-    X_test_lab = norm_per_sample(X_test_lab)
-    X_test_unlab = norm_per_sample(X_test_unlab)
+    if X_test_lab is not None:
+        X_test_lab = norm_per_sample(X_test_lab)
+    if X_test_unlab is not None:
+        X_test_unlab = norm_per_sample(X_test_unlab)
     
     # ========================================================================
     # 4. Create dataloaders
@@ -431,30 +512,36 @@ def main():
     }, last_ckpt_path)
     print(f"\n💾 Saved LAST checkpoint: {last_ckpt_path}")
     
-    # Prepare test dataloaders
-    X_test_lab_t, y_test_lab_t = make_tensors(X_test_lab, y_test_lab)
-    test_lab_loader = DataLoader(
-        TensorDataset(X_test_lab_t, y_test_lab_t), batch_size=args.batch_size, shuffle=False
-    )
-    
-    X_test_unlab_t, _ = make_tensors(X_test_unlab, np.zeros(len(X_test_unlab), dtype=np.int64))
-    test_unlab_loader = DataLoader(
-        TensorDataset(X_test_unlab_t, X_test_unlab_t[:, 0, 0]), 
-        batch_size=args.batch_size, shuffle=False
-    )
-    
-    # Function to evaluate a checkpoint on all datasets
+    # Prepare held-out test dataloaders (skipped when --use_indices)
+    if X_test_lab is not None:
+        X_test_lab_t, y_test_lab_t = make_tensors(X_test_lab, y_test_lab)
+        test_lab_loader = DataLoader(
+            TensorDataset(X_test_lab_t, y_test_lab_t), batch_size=args.batch_size, shuffle=False
+        )
+    else:
+        test_lab_loader = None
+
+    if X_test_unlab is not None:
+        X_test_unlab_t, _ = make_tensors(X_test_unlab, np.zeros(len(X_test_unlab), dtype=np.int64))
+        test_unlab_loader = DataLoader(
+            TensorDataset(X_test_unlab_t, X_test_unlab_t[:, 0, 0]),
+            batch_size=args.batch_size, shuffle=False
+        )
+    else:
+        test_unlab_loader = None
+
+    # Function to evaluate a checkpoint on all available datasets
     def evaluate_checkpoint(model_state, checkpoint_name, checkpoint_epoch):
-        """Evaluate a checkpoint on validation, labelled test, and unlabelled test sets."""
+        """Evaluate a checkpoint on val (and held-out test sets if present)."""
         model.load_state_dict(model_state)
         model.to(device)
         model.eval()
-        
+
         print("\n" + "="*80)
         print(f"=== {checkpoint_name} (Epoch {checkpoint_epoch}) ===")
         print("="*80)
-        
-        # Validation set
+
+        # Validation set (= test set when --use_indices)
         with torch.no_grad():
             y_pred_val = []
             for xb, _ in val_loader:
@@ -462,65 +549,76 @@ def main():
                 logits = model(xb)
                 y_pred_val.append(torch.argmax(logits, dim=1).cpu().numpy())
             y_pred_val = np.concatenate(y_pred_val)
-        
+
         val_acc_final = accuracy_score(yva, y_pred_val)
-        print(f"\n📊 Validation Set:")
+        val_label = "Validation/Test Set" if args.use_indices else "Validation Set"
+        print(f"\n📊 {val_label}:")
         print(f"Accuracy: {val_acc_final:.4f}")
         print("\nClassification report:")
         print(classification_report(yva, y_pred_val, target_names=target_names, digits=4))
         print("Confusion matrix:\n", confusion_matrix(yva, y_pred_val))
-        
-        # Labelled test set
-        with torch.no_grad():
-            y_pred_test_lab = []
-            y_prob_test_lab = []
-            for xb, _ in test_lab_loader:
-                xb = xb.to(device)
-                logits = model(xb)
-                probs = torch.softmax(logits, dim=1)
-                y_pred_test_lab.append(torch.argmax(logits, dim=1).cpu().numpy())
-                y_prob_test_lab.append(probs.cpu().numpy())
-            y_pred_test_lab = np.concatenate(y_pred_test_lab)
-            y_prob_test_lab = np.vstack(y_prob_test_lab)
-        
-        test_acc = accuracy_score(y_test_lab, y_pred_test_lab)
-        print(f"\n📊 Held-Out Labelled Test Set:")
-        print(f"Accuracy: {test_acc:.4f}")
-        print("\nClassification report:")
-        print(classification_report(y_test_lab, y_pred_test_lab, target_names=target_names, digits=4))
-        print("Confusion matrix:\n", confusion_matrix(y_test_lab, y_pred_test_lab))
-        
-        # Unlabelled test set
-        with torch.no_grad():
-            y_pred_test_unlab = []
-            y_prob_test_unlab = []
-            for xb, _ in test_unlab_loader:
-                xb = xb.to(device)
-                logits = model(xb)
-                probs = torch.softmax(logits, dim=1)
-                y_pred_test_unlab.append(torch.argmax(logits, dim=1).cpu().numpy())
-                y_prob_test_unlab.append(probs.cpu().numpy())
-            y_pred_test_unlab = np.concatenate(y_pred_test_unlab)
-            y_prob_test_unlab = np.vstack(y_prob_test_unlab)
-        
-        avg_conf = np.mean([y_prob_test_unlab[i, pred] for i, pred in enumerate(y_pred_test_unlab)])
-        print(f"\n📊 Held-Out Unlabelled Test Set:")
-        print(f"Average confidence: {avg_conf:.3f}")
-        print("Predictions:")
-        for i, (src_id, pred, prob) in enumerate(zip(src_ids_test_unlab, y_pred_test_unlab, y_prob_test_unlab)):
-            conf = prob[pred]
-            print(f"{i+1:2d}. {src_id:20s} → {CLASS_NAMES[pred]:20s} (conf: {conf:.3f})")
-        
-        return {
+
+        results = {
             'val_acc': val_acc_final,
             'val_preds': y_pred_val,
-            'test_acc': test_acc,
-            'test_preds': y_pred_test_lab,
-            'test_probs': y_prob_test_lab,
-            'unlab_preds': y_pred_test_unlab,
-            'unlab_probs': y_prob_test_unlab,
-            'avg_unlab_conf': avg_conf,
         }
+
+        # Labelled held-out test set (only when not using indices)
+        if test_lab_loader is not None:
+            with torch.no_grad():
+                y_pred_test_lab = []
+                y_prob_test_lab = []
+                for xb, _ in test_lab_loader:
+                    xb = xb.to(device)
+                    logits = model(xb)
+                    probs = torch.softmax(logits, dim=1)
+                    y_pred_test_lab.append(torch.argmax(logits, dim=1).cpu().numpy())
+                    y_prob_test_lab.append(probs.cpu().numpy())
+                y_pred_test_lab = np.concatenate(y_pred_test_lab)
+                y_prob_test_lab = np.vstack(y_prob_test_lab)
+
+            test_acc = accuracy_score(y_test_lab, y_pred_test_lab)
+            print(f"\n📊 Held-Out Labelled Test Set:")
+            print(f"Accuracy: {test_acc:.4f}")
+            print("\nClassification report:")
+            print(classification_report(y_test_lab, y_pred_test_lab, target_names=target_names, digits=4))
+            print("Confusion matrix:\n", confusion_matrix(y_test_lab, y_pred_test_lab))
+
+            results.update({
+                'test_acc': test_acc,
+                'test_preds': y_pred_test_lab,
+                'test_probs': y_prob_test_lab,
+            })
+
+        # Unlabelled held-out test set (only when not using indices)
+        if test_unlab_loader is not None:
+            with torch.no_grad():
+                y_pred_test_unlab = []
+                y_prob_test_unlab = []
+                for xb, _ in test_unlab_loader:
+                    xb = xb.to(device)
+                    logits = model(xb)
+                    probs = torch.softmax(logits, dim=1)
+                    y_pred_test_unlab.append(torch.argmax(logits, dim=1).cpu().numpy())
+                    y_prob_test_unlab.append(probs.cpu().numpy())
+                y_pred_test_unlab = np.concatenate(y_pred_test_unlab)
+                y_prob_test_unlab = np.vstack(y_prob_test_unlab)
+
+            avg_conf = np.mean([y_prob_test_unlab[i, pred] for i, pred in enumerate(y_pred_test_unlab)])
+            print(f"\n📊 Held-Out Unlabelled Test Set:")
+            print(f"Average confidence: {avg_conf:.3f}")
+            print("Predictions:")
+            for i, (src_id, pred, prob) in enumerate(zip(src_ids_test_unlab, y_pred_test_unlab, y_prob_test_unlab)):
+                conf = prob[pred]
+                print(f"{i+1:2d}. {src_id:20s} → {CLASS_NAMES[pred]:20s} (conf: {conf:.3f})")
+
+            results.update({
+                'unlab_preds': y_pred_test_unlab,
+                'unlab_probs': y_prob_test_unlab,
+                'avg_unlab_conf': avg_conf,
+            })
+
+        return results
     
     # Evaluate BOTH checkpoints
     print("\n" + "="*80)
@@ -536,97 +634,84 @@ def main():
     print("="*80)
     print(f"\n{'Metric':<35} {'BEST (E{})'.format(best['epoch']):<20} {'LAST (E{})'.format(epoch):<20} {'Winner'}")
     print("-" * 95)
-    print(f"{'Validation Accuracy':<35} {best_results['val_acc']:.4f}{' '*16} {last_results['val_acc']:.4f}{' '*16} {'✅ BEST' if best_results['val_acc'] > last_results['val_acc'] else '✅ LAST' if last_results['val_acc'] > best_results['val_acc'] else '🤝 TIE'}")
-    print(f"{'Labelled Test Accuracy':<35} {best_results['test_acc']:.4f}{' '*16} {last_results['test_acc']:.4f}{' '*16} {'✅ BEST' if best_results['test_acc'] > last_results['test_acc'] else '✅ LAST' if last_results['test_acc'] > best_results['test_acc'] else '🤝 TIE'}")
-    print(f"{'Unlabelled Avg Confidence':<35} {best_results['avg_unlab_conf']:.4f}{' '*16} {last_results['avg_unlab_conf']:.4f}{' '*16} {'✅ BEST' if best_results['avg_unlab_conf'] > last_results['avg_unlab_conf'] else '✅ LAST' if last_results['avg_unlab_conf'] > best_results['avg_unlab_conf'] else '🤝 TIE'}")
-    
-    # Check agreement on unlabelled test set
-    agreement = (best_results['unlab_preds'] == last_results['unlab_preds']).sum()
-    print(f"\n{'Unlabelled Test Agreement':<35} {agreement}/{len(src_ids_test_unlab)} predictions match")
-    
-    if agreement < len(src_ids_test_unlab):
-        print("\n🔍 Disagreements on unlabelled test set:")
-        for i in range(len(src_ids_test_unlab)):
-            if best_results['unlab_preds'][i] != last_results['unlab_preds'][i]:
-                best_pred = best_results['unlab_preds'][i]
-                last_pred = last_results['unlab_preds'][i]
-                best_conf = best_results['unlab_probs'][i, best_pred]
-                last_conf = last_results['unlab_probs'][i, last_pred]
-                print(f"  {src_ids_test_unlab[i]:20s}: BEST={CLASS_NAMES[best_pred]:15s} (conf={best_conf:.3f}), "
-                      f"LAST={CLASS_NAMES[last_pred]:15s} (conf={last_conf:.3f})")
-    
+    val_label = "Val/Test Accuracy" if args.use_indices else "Validation Accuracy"
+    print(f"{val_label:<35} {best_results['val_acc']:.4f}{' '*16} {last_results['val_acc']:.4f}{' '*16} {'✅ BEST' if best_results['val_acc'] > last_results['val_acc'] else '✅ LAST' if last_results['val_acc'] > best_results['val_acc'] else '🤝 TIE'}")
+    if 'test_acc' in best_results and 'test_acc' in last_results:
+        print(f"{'Labelled Test Accuracy':<35} {best_results['test_acc']:.4f}{' '*16} {last_results['test_acc']:.4f}{' '*16} {'✅ BEST' if best_results['test_acc'] > last_results['test_acc'] else '✅ LAST' if last_results['test_acc'] > best_results['test_acc'] else '🤝 TIE'}")
+    if 'avg_unlab_conf' in best_results and 'avg_unlab_conf' in last_results:
+        print(f"{'Unlabelled Avg Confidence':<35} {best_results['avg_unlab_conf']:.4f}{' '*16} {last_results['avg_unlab_conf']:.4f}{' '*16} {'✅ BEST' if best_results['avg_unlab_conf'] > last_results['avg_unlab_conf'] else '✅ LAST' if last_results['avg_unlab_conf'] > best_results['avg_unlab_conf'] else '🤝 TIE'}")
+
+    # Check agreement on unlabelled test set (only when present)
+    if 'unlab_preds' in best_results and 'unlab_preds' in last_results:
+        agreement = (best_results['unlab_preds'] == last_results['unlab_preds']).sum()
+        print(f"\n{'Unlabelled Test Agreement':<35} {agreement}/{len(src_ids_test_unlab)} predictions match")
+
+        if agreement < len(src_ids_test_unlab):
+            print("\n🔍 Disagreements on unlabelled test set:")
+            for i in range(len(src_ids_test_unlab)):
+                if best_results['unlab_preds'][i] != last_results['unlab_preds'][i]:
+                    best_pred = best_results['unlab_preds'][i]
+                    last_pred = last_results['unlab_preds'][i]
+                    best_conf = best_results['unlab_probs'][i, best_pred]
+                    last_conf = last_results['unlab_probs'][i, last_pred]
+                    print(f"  {src_ids_test_unlab[i]:20s}: BEST={CLASS_NAMES[best_pred]:15s} (conf={best_conf:.3f}), "
+                          f"LAST={CLASS_NAMES[last_pred]:15s} (conf={last_conf:.3f})")
+
     # Recommendation
     print("\n💡 Recommendation:")
-    if best_results['val_acc'] >= last_results['val_acc'] and best_results['test_acc'] >= last_results['test_acc']:
-        print("   Use BEST checkpoint - it generalizes better and hasn't overfit to pseudo-labels.")
-    elif last_results['test_acc'] > best_results['test_acc'] and last_results['avg_unlab_conf'] > best_results['avg_unlab_conf']:
-        print("   Consider LAST checkpoint - it may have learned useful patterns from unlabelled data.")
+    if 'test_acc' in best_results and 'test_acc' in last_results:
+        if best_results['val_acc'] >= last_results['val_acc'] and best_results['test_acc'] >= last_results['test_acc']:
+            print("   Use BEST checkpoint - it generalizes better and hasn't overfit to pseudo-labels.")
+        elif last_results['test_acc'] > best_results['test_acc'] and last_results.get('avg_unlab_conf', 0) > best_results.get('avg_unlab_conf', 0):
+            print("   Consider LAST checkpoint - it may have learned useful patterns from unlabelled data.")
+        else:
+            print("   BEST checkpoint is safer, but inspect unlabelled predictions carefully.")
     else:
-        print("   BEST checkpoint is safer, but inspect unlabelled predictions carefully.")
+        if best_results['val_acc'] >= last_results['val_acc']:
+            print("   Use BEST checkpoint - higher val/test accuracy.")
+        else:
+            print("   LAST checkpoint scored higher on val/test - inspect both before choosing.")
     
     # Save predictions to JSON (both checkpoints)
     if args.save_preds:
+        def _ckpt_block(results, ckpt_epoch, val_acc):
+            block = {
+                'epoch': ckpt_epoch,
+                'val_acc': float(val_acc),
+            }
+            if 'test_preds' in results:
+                block['labelled_test'] = [
+                    {
+                        'source_id': str(src_ids_test_lab[i]),
+                        'true_label': int(y_test_lab[i]),
+                        'true_label_name': CLASS_NAMES[int(y_test_lab[i])],
+                        'predicted': int(results['test_preds'][i]),
+                        'predicted_name': CLASS_NAMES[int(results['test_preds'][i])],
+                        'confidence': float(results['test_probs'][i, results['test_preds'][i]]),
+                        'correct': bool(y_test_lab[i] == results['test_preds'][i]),
+                    }
+                    for i in range(len(y_test_lab))
+                ]
+                block['test_acc_labelled'] = float(results['test_acc'])
+            if 'unlab_preds' in results:
+                block['unlabelled_test'] = [
+                    {
+                        'source_id': str(src_ids_test_unlab[i]),
+                        'predicted': int(results['unlab_preds'][i]),
+                        'predicted_name': CLASS_NAMES[int(results['unlab_preds'][i])],
+                        'confidence': float(results['unlab_probs'][i, results['unlab_preds'][i]]),
+                        'probabilities': {CLASS_NAMES[j]: float(results['unlab_probs'][i, j])
+                                         for j in range(num_classes)},
+                        'manual_label': None,
+                    }
+                    for i in range(len(results['unlab_preds']))
+                ]
+                block['avg_unlab_conf'] = float(results['avg_unlab_conf'])
+            return block
+
         predictions = {
-            'best_checkpoint': {
-                'epoch': best['epoch'],
-                'val_acc': float(best['acc']),
-                'labelled_test': [
-                    {
-                        'source_id': str(src_ids_test_lab[i]),
-                        'true_label': int(y_test_lab[i]),
-                        'true_label_name': CLASS_NAMES[int(y_test_lab[i])],
-                        'predicted': int(best_results['test_preds'][i]),
-                        'predicted_name': CLASS_NAMES[int(best_results['test_preds'][i])],
-                        'confidence': float(best_results['test_probs'][i, best_results['test_preds'][i]]),
-                        'correct': bool(y_test_lab[i] == best_results['test_preds'][i]),
-                    }
-                    for i in range(len(y_test_lab))
-                ],
-                'unlabelled_test': [
-                    {
-                        'source_id': str(src_ids_test_unlab[i]),
-                        'predicted': int(best_results['unlab_preds'][i]),
-                        'predicted_name': CLASS_NAMES[int(best_results['unlab_preds'][i])],
-                        'confidence': float(best_results['unlab_probs'][i, best_results['unlab_preds'][i]]),
-                        'probabilities': {CLASS_NAMES[j]: float(best_results['unlab_probs'][i, j]) 
-                                         for j in range(num_classes)},
-                        'manual_label': None,
-                    }
-                    for i in range(len(best_results['unlab_preds']))
-                ],
-                'test_acc_labelled': float(best_results['test_acc']),
-                'avg_unlab_conf': float(best_results['avg_unlab_conf']),
-            },
-            'last_checkpoint': {
-                'epoch': epoch,
-                'val_acc': float(last_results['val_acc']),
-                'labelled_test': [
-                    {
-                        'source_id': str(src_ids_test_lab[i]),
-                        'true_label': int(y_test_lab[i]),
-                        'true_label_name': CLASS_NAMES[int(y_test_lab[i])],
-                        'predicted': int(last_results['test_preds'][i]),
-                        'predicted_name': CLASS_NAMES[int(last_results['test_preds'][i])],
-                        'confidence': float(last_results['test_probs'][i, last_results['test_preds'][i]]),
-                        'correct': bool(y_test_lab[i] == last_results['test_preds'][i]),
-                    }
-                    for i in range(len(y_test_lab))
-                ],
-                'unlabelled_test': [
-                    {
-                        'source_id': str(src_ids_test_unlab[i]),
-                        'predicted': int(last_results['unlab_preds'][i]),
-                        'predicted_name': CLASS_NAMES[int(last_results['unlab_preds'][i])],
-                        'confidence': float(last_results['unlab_probs'][i, last_results['unlab_preds'][i]]),
-                        'probabilities': {CLASS_NAMES[j]: float(last_results['unlab_probs'][i, j]) 
-                                         for j in range(num_classes)},
-                        'manual_label': None,
-                    }
-                    for i in range(len(last_results['unlab_preds']))
-                ],
-                'test_acc_labelled': float(last_results['test_acc']),
-                'avg_unlab_conf': float(last_results['avg_unlab_conf']),
-            },
+            'best_checkpoint': _ckpt_block(best_results, best['epoch'], best['acc']),
+            'last_checkpoint': _ckpt_block(last_results, epoch, last_results['val_acc']),
             'model_info': {
                 'classes': args.classes,
                 'data': args.data,
@@ -634,12 +719,13 @@ def main():
                 'alpha_max': args.alpha_max,
                 'alpha_warmup': args.alpha_warmup,
                 'conf_thresholds': {CLASS_NAMES[k]: v for k, v in conf_thresholds.items()},
+                'use_indices': bool(args.use_indices),
             }
         }
-        
+
         with open(args.save_preds, 'w') as f:
             json.dump(predictions, f, indent=2)
-        
+
         print(f"\n💾 Saved predictions (BEST and LAST) to: {args.save_preds}")
     
     # Animation script

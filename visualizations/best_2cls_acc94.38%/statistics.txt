@@ -6,13 +6,28 @@ Output directory: visualizations/best_2cls_acc94.38%
 Method: UMAP
 Classes: 2
 Validation accuracy: 94.38%
-Total samples: 507
+Total samples: 269
 
 Per-class performance:
-  AGN                 : 241/268 correct (89.93%)
-  HM/LM/YSO           : 210/239 correct (87.87%)
+  AGN                 : 134/144 correct (93.06%)
+  HM/LM/YSO           : 122/125 correct (97.60%)
 
 Most confused pairs:
-  HM/LM/YSO       → AGN            :  29 errors
-  AGN             → HM/LM/YSO      :  27 errors
+  AGN             → HM/LM/YSO      :  10 errors
+  HM/LM/YSO       → AGN            :   3 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO
+AGN                                  134                  10
+HM/LM/YSO                              3                 122
+
+Classification Report:
+              precision    recall  f1-score   support
+
+         AGN     0.9781    0.9306    0.9537       144
+   HM/LM/YSO     0.9242    0.9760    0.9494       125
+
+    accuracy                         0.9517       269
+   macro avg     0.9512    0.9533    0.9516       269
+weighted avg     0.9531    0.9517    0.9517       269
 ============================================================

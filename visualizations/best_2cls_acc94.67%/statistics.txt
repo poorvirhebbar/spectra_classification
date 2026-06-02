@@ -15,4 +15,19 @@ Per-class performance:
 Most confused pairs:
   HM/LM/YSO       → AGN            :  19 errors
   AGN             → HM/LM/YSO      :   8 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO
+AGN                                  260                   8
+HM/LM/YSO                             19                 220
+
+Classification Report:
+              precision    recall  f1-score   support
+
+         AGN     0.9319    0.9701    0.9506       268
+   HM/LM/YSO     0.9649    0.9205    0.9422       239
+
+    accuracy                         0.9467       507
+   macro avg     0.9484    0.9453    0.9464       507
+weighted avg     0.9475    0.9467    0.9467       507
 ============================================================
