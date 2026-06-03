@@ -348,6 +348,10 @@ def main():
                        help="Directory holding Train_*/Test_* index files")
     parser.add_argument("--data_dir", default="data",
                        help="Directory containing data files (default: data)")
+    parser.add_argument("--out_root", default=None,
+                       help="Override the top-level visualizations directory "
+                            "(e.g. visualizations_kfold). If unset, picks "
+                            "visualizations_indices/visualizations automatically.")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -384,8 +388,11 @@ def main():
     # Detect supervised vs semi-supervised from checkpoint filename
     training_kind = "semisup" if "semisup" in Path(args.checkpoint).name else "supervised"
 
-    # Resolve output root directory
-    root_dir = "visualizations_indices" if args.use_indices else "visualizations"
+    # Resolve output root directory (CLI override wins)
+    if args.out_root:
+        root_dir = args.out_root
+    else:
+        root_dir = "visualizations_indices" if args.use_indices else "visualizations"
 
     # Create output directory based on checkpoint name + run identifiers
     output_dir, checkpoint_info = create_output_directory(

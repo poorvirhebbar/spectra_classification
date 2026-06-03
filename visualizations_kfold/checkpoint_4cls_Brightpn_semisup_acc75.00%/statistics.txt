@@ -1,0 +1,42 @@
+============================================================
+LATENT SPACE VISUALIZATION SUMMARY
+============================================================
+Checkpoint: fold2_semisup_4cls_Brightpn_epoch064_val0.7500.pt
+Output directory: visualizations_kfold/checkpoint_4cls_Brightpn_semisup_acc75.00%
+Method: UMAP
+Classes: 4
+Validation accuracy: 75.00%
+Total samples: 548
+
+Per-class performance:
+  AGN                 : 208/276 correct (75.36%)
+  HM/LM/YSO           : 180/239 correct (75.31%)
+  CV                  :   0/ 17 correct (0.00%)
+  NS/HMXB/LMXB/NS_BIN :  11/ 16 correct (68.75%)
+
+Most confused pairs:
+  AGN             → NS/HMXB/LMXB/NS_BIN:  57 errors
+  HM/LM/YSO       → NS/HMXB/LMXB/NS_BIN:  41 errors
+  HM/LM/YSO       → AGN            :  18 errors
+  AGN             → HM/LM/YSO      :  11 errors
+  CV              → NS/HMXB/LMXB/NS_BIN:   8 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO                  CV NS/HMXB/LMXB/NS_BIN
+AGN                                  208                  11                   0                  57
+HM/LM/YSO                             18                 180                   0                  41
+CV                                     6                   3                   0                   8
+NS/HMXB/LMXB/NS_BIN                    3                   2                   0                  11
+
+Classification Report:
+                     precision    recall  f1-score   support
+
+                AGN     0.8851    0.7536    0.8141       276
+          HM/LM/YSO     0.9184    0.7531    0.8276       239
+                 CV     0.0000    0.0000    0.0000        17
+NS/HMXB/LMXB/NS_BIN     0.0940    0.6875    0.1654        16
+
+           accuracy                         0.7281       548
+          macro avg     0.4744    0.5486    0.4518       548
+       weighted avg     0.8491    0.7281    0.7758       548
+============================================================

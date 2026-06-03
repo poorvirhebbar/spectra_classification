@@ -1,0 +1,76 @@
+{
+  "data": "Brightpn",
+  "classes": "2",
+  "mode": "semisup",
+  "n_folds": 5,
+  "train_accuracies": [
+    0.9431396786155748,
+    0.9561186650185414,
+    0.9555006180469716,
+    0.9308214947498455,
+    0.9499691167387276
+  ],
+  "val_accuracies": [
+    0.9358024691358025,
+    0.9407407407407408,
+    0.9234567901234568,
+    0.9504950495049505,
+    0.9257425742574258
+  ],
+  "test_accuracies": [
+    0.9155206286836935,
+    0.9233791748526523,
+    0.9155206286836935,
+    0.9214145383104125,
+    0.9135559921414538
+  ],
+  "best_epochs": [
+    42,
+    61,
+    57,
+    13,
+    37
+  ],
+  "fold_checkpoints": [
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold0_semisup_2cls_Brightpn_epoch042_val0.9358.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold1_semisup_2cls_Brightpn_epoch061_val0.9407.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold2_semisup_2cls_Brightpn_epoch057_val0.9235.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold3_semisup_2cls_Brightpn_epoch013_val0.9505.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold4_semisup_2cls_Brightpn_epoch037_val0.9257.pt"
+  ],
+  "best_fold": 3,
+  "best_checkpoint": "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_semisup/fold3_semisup_2cls_Brightpn_epoch013_val0.9505.pt",
+  "train_acc_mean": 0.9471099146339321,
+  "train_acc_std": 0.009389482630002846,
+  "val_acc_mean": 0.9352475247524753,
+  "val_acc_std": 0.00992306306787316,
+  "test_acc_mean": 0.9178781925343811,
+  "test_acc_std": 0.0038095715971837663,
+  "args": {
+    "classes": "2",
+    "n_folds": 5,
+    "epochs": 200,
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "data": "Brightpn",
+    "data_dir": "data",
+    "unlabelled_batch_size": 128,
+    "alpha_warmup": 5,
+    "alpha_max": 0.6,
+    "alpha_schedule": "immediate",
+    "conf_threshold_agn": 0.8,
+    "conf_threshold_hmlm": 0.9,
+    "conf_threshold_cv": 0.5,
+    "conf_threshold_ns": 0.5,
+    "oversample_target": 0.7,
+    "focal_gamma": 2.0,
+    "minority_boost": 1.0,
+    "val_split": 0.2,
+    "num_workers": 2,
+    "device": "cuda",
+    "out_dir": "checkpoints_kfold/Brightpn_2cls_semisup",
+    "use_indices": true,
+    "indices_dir": "data/data_indices"
+  }
+}

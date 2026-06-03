@@ -1,0 +1,68 @@
+{
+  "data": "Brightpn",
+  "classes": "2",
+  "mode": "supervised",
+  "n_folds": 5,
+  "train_accuracies": [
+    0.965389369592089,
+    0.9641532756489494,
+    0.9555006180469716,
+    0.9592340951204448,
+    0.9722050648548487
+  ],
+  "val_accuracies": [
+    0.9358024691358025,
+    0.9481481481481482,
+    0.9333333333333333,
+    0.9529702970297029,
+    0.9306930693069307
+  ],
+  "test_accuracies": [
+    0.9233791748526523,
+    0.925343811394892,
+    0.9155206286836935,
+    0.9214145383104125,
+    0.9096267190569745
+  ],
+  "best_epochs": [
+    64,
+    69,
+    42,
+    56,
+    84
+  ],
+  "fold_checkpoints": [
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold0_2cls_Brightpn_epoch064_val0.9358.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold1_2cls_Brightpn_epoch069_val0.9481.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold2_2cls_Brightpn_epoch042_val0.9333.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold3_2cls_Brightpn_epoch056_val0.9530.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold4_2cls_Brightpn_epoch084_val0.9307.pt"
+  ],
+  "best_fold": 3,
+  "best_checkpoint": "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_2cls_supervised/fold3_2cls_Brightpn_epoch056_val0.9530.pt",
+  "train_acc_mean": 0.9632964846526606,
+  "train_acc_std": 0.005687804571976411,
+  "val_acc_mean": 0.9401894633907835,
+  "val_acc_std": 0.008753560534166486,
+  "test_acc_mean": 0.919056974459725,
+  "test_acc_std": 0.0057480309777319495,
+  "args": {
+    "classes": "2",
+    "n_folds": 5,
+    "epochs": 100,
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "oversample_target": 0.7,
+    "focal_gamma": 2.0,
+    "minority_boost": 1.0,
+    "val_split": 0.2,
+    "num_workers": 2,
+    "device": "cuda",
+    "out_dir": "checkpoints_kfold/Brightpn_2cls_supervised",
+    "data": "Brightpn",
+    "data_dir": "data",
+    "use_indices": true,
+    "indices_dir": "data/data_indices"
+  }
+}
