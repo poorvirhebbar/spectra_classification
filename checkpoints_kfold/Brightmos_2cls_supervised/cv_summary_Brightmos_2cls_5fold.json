@@ -1,0 +1,68 @@
+{
+  "data": "Brightmos",
+  "classes": "2",
+  "mode": "supervised",
+  "n_folds": 5,
+  "train_accuracies": [
+    0.9462616822429907,
+    0.9824970828471412,
+    0.9498249708284714,
+    0.9346557759626605,
+    0.9463243873978997
+  ],
+  "val_accuracies": [
+    0.9348837209302325,
+    0.9532710280373832,
+    0.9018691588785047,
+    0.9532710280373832,
+    0.9205607476635514
+  ],
+  "test_accuracies": [
+    0.8925925925925926,
+    0.8888888888888888,
+    0.9074074074074074,
+    0.8962962962962963,
+    0.9
+  ],
+  "best_epochs": [
+    21,
+    89,
+    25,
+    31,
+    22
+  ],
+  "fold_checkpoints": [
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold0_2cls_Brightmos_epoch021_val0.9349.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold1_2cls_Brightmos_epoch089_val0.9533.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold2_2cls_Brightmos_epoch025_val0.9019.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold3_2cls_Brightmos_epoch031_val0.9533.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold4_2cls_Brightmos_epoch022_val0.9206.pt"
+  ],
+  "best_fold": 1,
+  "best_checkpoint": "/home/poorvi/spectra_classification/checkpoints_kfold/Brightmos_2cls_supervised/fold1_2cls_Brightmos_epoch089_val0.9533.pt",
+  "train_acc_mean": 0.9519127798558327,
+  "train_acc_std": 0.01612902820297371,
+  "val_acc_mean": 0.9327711367094109,
+  "val_acc_std": 0.0197432516851732,
+  "test_acc_mean": 0.8970370370370372,
+  "test_acc_std": 0.006372092790401971,
+  "args": {
+    "classes": "2",
+    "n_folds": 5,
+    "epochs": 100,
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "oversample_target": 0.7,
+    "focal_gamma": 2.0,
+    "minority_boost": 1.0,
+    "val_split": 0.2,
+    "num_workers": 2,
+    "device": "cuda",
+    "out_dir": "checkpoints_kfold/Brightmos_2cls_supervised",
+    "data": "Brightmos",
+    "data_dir": "data",
+    "use_indices": true,
+    "indices_dir": "data/data_indices"
+  }
+}

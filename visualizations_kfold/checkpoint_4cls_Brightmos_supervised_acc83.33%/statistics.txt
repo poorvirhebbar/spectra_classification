@@ -1,0 +1,42 @@
+============================================================
+LATENT SPACE VISUALIZATION SUMMARY
+============================================================
+Checkpoint: fold3_4cls_Brightmos_epoch090_val0.8333.pt
+Output directory: visualizations_kfold/checkpoint_4cls_Brightmos_supervised_acc83.33%
+Method: UMAP
+Classes: 4
+Validation accuracy: 83.33%
+Total samples: 300
+
+Per-class performance:
+  AGN                 : 124/150 correct (82.67%)
+  HM/LM/YSO           : 100/116 correct (86.21%)
+  CV                  :   0/ 16 correct (0.00%)
+  NS/HMXB/LMXB/NS_BIN :   7/ 18 correct (38.89%)
+
+Most confused pairs:
+  AGN             → HM/LM/YSO      :  16 errors
+  CV              → AGN            :  10 errors
+  AGN             → NS/HMXB/LMXB/NS_BIN:  10 errors
+  HM/LM/YSO       → AGN            :   9 errors
+  HM/LM/YSO       → NS/HMXB/LMXB/NS_BIN:   7 errors
+
+Confusion Matrix:
+                                     AGN           HM/LM/YSO                  CV NS/HMXB/LMXB/NS_BIN
+AGN                                  124                  16                   0                  10
+HM/LM/YSO                              9                 100                   0                   7
+CV                                    10                   4                   0                   2
+NS/HMXB/LMXB/NS_BIN                    5                   6                   0                   7
+
+Classification Report:
+                     precision    recall  f1-score   support
+
+                AGN     0.8378    0.8267    0.8322       150
+          HM/LM/YSO     0.7937    0.8621    0.8264       116
+                 CV     0.0000    0.0000    0.0000        16
+NS/HMXB/LMXB/NS_BIN     0.2692    0.3889    0.3182        18
+
+           accuracy                         0.7700       300
+          macro avg     0.4752    0.5194    0.4942       300
+       weighted avg     0.7420    0.7700    0.7548       300
+============================================================
