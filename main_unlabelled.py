@@ -67,7 +67,7 @@ def parse_args():
     # Confidence thresholds (class-specific for 4-class)
     ap.add_argument("--conf_threshold_agn", type=float, default=0.8,
                     help="Confidence threshold for AGN pseudo-labels")
-    ap.add_argument("--conf_threshold_hmlm", type=float, default=0.9,
+    ap.add_argument("--conf_threshold_hmlm", type=float, default=0.75,
                     help="Confidence threshold for HM/LM/YSO pseudo-labels")
     ap.add_argument("--conf_threshold_cv", type=float, default=0.5,
                     help="Confidence threshold for CV pseudo-labels")

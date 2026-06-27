@@ -48,7 +48,7 @@ def parse_args():
     ap.add_argument("--alpha_max", type=float, default=0.6)
     ap.add_argument("--alpha_schedule", choices=["standard", "immediate"], default="immediate")
     ap.add_argument("--conf_threshold_agn", type=float, default=0.8)
-    ap.add_argument("--conf_threshold_hmlm", type=float, default=0.9)
+    ap.add_argument("--conf_threshold_hmlm", type=float, default=0.75)
     ap.add_argument("--conf_threshold_cv", type=float, default=0.5)
     ap.add_argument("--conf_threshold_ns", type=float, default=0.5)
 

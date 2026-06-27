@@ -32,14 +32,14 @@
     55
   ],
   "fold_checkpoints": [
-    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold0_semisup_4cls_Brightpn_epoch107_val0.6682.pt",
-    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold1_semisup_4cls_Brightpn_epoch048_val0.7346.pt",
-    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold2_semisup_4cls_Brightpn_epoch064_val0.7500.pt",
-    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold3_semisup_4cls_Brightpn_epoch065_val0.7110.pt",
-    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold4_semisup_4cls_Brightpn_epoch055_val0.7179.pt"
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold0_semisup_4cls_Brightpn_thr0.9_epoch107_val0.6682.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold1_semisup_4cls_Brightpn_thr0.9_epoch048_val0.7346.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold2_semisup_4cls_Brightpn_thr0.9_epoch064_val0.7500.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold3_semisup_4cls_Brightpn_thr0.9_epoch065_val0.7110.pt",
+    "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold4_semisup_4cls_Brightpn_thr0.9_epoch055_val0.7179.pt"
   ],
   "best_fold": 2,
-  "best_checkpoint": "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold2_semisup_4cls_Brightpn_epoch064_val0.7500.pt",
+  "best_checkpoint": "/home/poorvi/spectra_classification/checkpoints_kfold/Brightpn_4cls_semisup/fold2_semisup_4cls_Brightpn_thr0.9_epoch064_val0.7500.pt",
   "train_acc_mean": 0.5871273903774309,
   "train_acc_std": 0.02310895777135263,
   "val_acc_mean": 0.7163290155984297,
